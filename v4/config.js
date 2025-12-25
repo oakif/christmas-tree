@@ -135,6 +135,7 @@ export const CONFIG = {
 
     // --- INTERACTION ---
     reassembleOnClick: true,   // If true, clicking while exploded will reassemble immediately
+    resetMouseOnLeave: false,   // If true, reset parallax to center when mouse leaves screen; if false, freeze at last position
 
     // --- BLOOM (GLOW EFFECT) ---
     bloomStrength: 0.35,       // Reduced slightly

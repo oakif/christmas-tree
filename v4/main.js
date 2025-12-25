@@ -593,8 +593,10 @@ function updateMousePosition(event) {
 }
 
 function resetMousePosition() {
-    mouse.x = 0;
-    mouse.y = 0;
+    if (CONFIG.resetMouseOnLeave) {
+        mouse.x = 0;
+        mouse.y = 0;
+    }
 }
 
 // Reset mouse tracking on visibility changes
