@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enchanted Christmas Tree</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --forest-green: #0d3b2e;
+            --deep-green: #1a5c47;
+            --emerald: #2d8b6d;
+            --gold: #d4af37;
+            --bright-gold: #ffd700;
+            --ruby: #9b1b30;
+            --sapphire: #0f4c81;
+            --amethyst: #6a2c70;
+            --pearl: #f8f6f0;
+            --midnight: #0a1628;
+            --deep-navy: #132238;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(to bottom, var(--midnight) 0%, var(--deep-navy) 100%);
+            overflow: hidden;
+            font-family: 'Cinzel', serif;
+            position: relative;
+        }
+
+        #snow-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .snowflake {
+            position: absolute;
+            top: -10px;
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 1em;
+            animation: fall linear infinite;
+        }
+
+        @keyframes fall {
+            to {
+                transform: translateY(100vh) translateX(var(--drift));
+                opacity: 0;
+            }
+        }
+
+        #title {
+            position: absolute;
+            top: 40px;
+            color: var(--gold);
+            font-size: 2.5rem;
+            font-weight: 600;
+            text-shadow: 0 0 20px rgba(212, 175, 55, 0.5),
+                         0 0 40px rgba(212, 175, 55, 0.3);
+            letter-spacing: 0.15em;
+            z-index: 10;
+            opacity: 0;
+            animation: titleFadeIn 1.5s ease-out 0.5s forwards;
+        }
+
+        @keyframes titleFadeIn {
+            to {
+                opacity: 1;
+            }
+        }
+
+        #instruction {
+            position: absolute;
+            bottom: 60px;
+            color: var(--pearl);
+            font-size: 0.9rem;
+            letter-spacing: 0.2em;
+            opacity: 0.6;
+            z-index: 10;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 0.4; }
+            50% { opacity: 0.8; }
+        }
+
+        #container {
+            position: relative;
+            width: 500px;
+            height: 700px;
+            cursor: pointer;
+            z-index: 5;
+            animation: containerFloat 0.2s ease-in-out;
+        }
+
+        @keyframes containerFloat {
+            from {
+                transform: translateY(20px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .tree-piece {
+            position: absolute;
+            transition: all 0.1s ease-out;
+        }
+
+        .branch {
+            width: 0;
+            height: 0;
+            border-left: 40px solid transparent;
+            border-right: 40px solid transparent;
+            border-bottom: 50px solid var(--forest-green);
+            filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.4));
+            position: relative;
+        }
+
+        .branch::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -40px;
+            width: 0;
+            height: 0;
+            border-left: 40px solid transparent;
+            border-right: 40px solid transparent;
+            border-bottom: 50px solid var(--deep-green);
+            opacity: 0.6;
+            transform: scaleX(0.85);
+        }
+
+        .star {
+            position: relative;
+            width: 0;
+            height: 0;
+            filter: drop-shadow(0 0 20px var(--bright-gold))
+                    drop-shadow(0 0 40px var(--gold));
+            animation: starShimmer 2s ease-in-out infinite;
+        }
+
+        @keyframes starShimmer {
+            0%, 100% {
+                filter: drop-shadow(0 0 20px var(--bright-gold))
+                        drop-shadow(0 0 40px var(--gold));
+            }
+            50% {
+                filter: drop-shadow(0 0 30px var(--bright-gold))
+                        drop-shadow(0 0 60px var(--gold))
+                        drop-shadow(0 0 80px rgba(255, 215, 0, 0.5));
+            }
+        }
+
+        .star::before,
+        .star::after {
+            content: '';
+            position: absolute;
+            width: 0;
+            height: 0;
+        }
+
+        .star::before {
+            border-left: 20px solid transparent;
+            border-right: 20px solid transparent;
+            border-bottom: 35px solid var(--bright-gold);
+            top: -35px;
+            left: -20px;
+        }
+
+        .star::after {
+            border-left: 20px solid transparent;
+            border-right: 20px solid transparent;
+            border-top: 35px solid var(--bright-gold);
+            top: 0;
+            left: -20px;
+        }
+
+        .star-glow {
+            position: absolute;
+            width: 80px;
+            height: 80px;
+            background: radial-gradient(circle, rgba(255, 215, 0, 0.4) 0%, transparent 70%);
+            border-radius: 50%;
+            top: -40px;
+            left: -40px;
+            animation: glowPulse 2s ease-in-out infinite;
+            pointer-events: none;
+        }
+
+        @keyframes glowPulse {
+            0%, 100% {
+                transform: scale(1);
+                opacity: 0.6;
+            }
+            50% {
+                transform: scale(1.2);
+                opacity: 1;
+            }
+        }
+
+        .trunk {
+            width: 60px;
+            height: 80px;
+            background: linear-gradient(to right, #4a3625, #5d4536, #4a3625);
+            border-radius: 8px;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.5),
+                        inset 0 2px 4px rgba(255, 255, 255, 0.1);
+            position: relative;
+        }
+
+        .trunk::before {
+            content: '';
+            position: absolute;
+            top: 10%;
+            left: 15%;
+            width: 70%;
+            height: 3px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 2px;
+        }
+
+        .trunk::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 10%;
+            width: 80%;
+            height: 3px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 2px;
+        }
+
+        .ornament {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            position: absolute;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4),
+                        inset -2px -2px 4px rgba(0, 0, 0, 0.3),
+                        inset 2px 2px 4px rgba(255, 255, 255, 0.3);
+            animation: ornamentGlow 3s ease-in-out infinite;
+        }
+
+        @keyframes ornamentGlow {
+            0%, 100% {
+                filter: brightness(1) drop-shadow(0 0 8px currentColor);
+            }
+            50% {
+                filter: brightness(1.3) drop-shadow(0 0 16px currentColor);
+            }
+        }
+
+        .ornament::before {
+            content: '';
+            position: absolute;
+            top: 3px;
+            left: 5px;
+            width: 6px;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.8);
+            border-radius: 50%;
+            filter: blur(1px);
+        }
+
+        .ornament::after {
+            content: '';
+            position: absolute;
+            top: -4px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 4px;
+            height: 5px;
+            background: linear-gradient(to bottom, var(--gold), #8b7355);
+            border-radius: 2px 2px 0 0;
+        }
+
+        .light {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            position: absolute;
+            animation: twinkle 2s ease-in-out infinite;
+        }
+
+        @keyframes twinkle {
+            0%, 100% {
+                opacity: 0.6;
+                transform: scale(1);
+            }
+            50% {
+                opacity: 1;
+                transform: scale(1.1);
+            }
+        }
+
+        .particle {
+            position: absolute;
+            width: 4px;
+            height: 4px;
+            background: var(--gold);
+            border-radius: 50%;
+            pointer-events: none;
+            box-shadow: 0 0 10px var(--bright-gold);
+        }
+
+        @keyframes treeSway {
+            0%, 100% {
+                transform: rotate(0deg);
+            }
+            50% {
+                transform: rotate(0.5deg);
+            }
+        }
+
+        .tree-piece.idle {
+            animation: treeSway 4s ease-in-out infinite;
+        }
+
+        #container:hover {
+            transform: scale(1.02);
+            transition: transform 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+    <div id="snow-container"></div>
+    <h1 id="title">ENCHANTED TREE</h1>
+    <div id="container"></div>
+    <p id="instruction">CLICK TO WITNESS MAGIC</p>
+
+    <script>
+        // Snowfall
+        const snowContainer = document.getElementById('snow-container');
+        const snowflakes = ['❄', '❅', '❆'];
+
+        function createSnowflake() {
+            const snowflake = document.createElement('div');
+            snowflake.className = 'snowflake';
+            snowflake.textContent = snowflakes[Math.floor(Math.random() * snowflakes.length)];
+            snowflake.style.left = Math.random() * 100 + '%';
+            snowflake.style.animationDuration = (Math.random() * 3 + 7) + 's';
+            snowflake.style.fontSize = (Math.random() * 0.5 + 0.5) + 'em';
+            snowflake.style.setProperty('--drift', (Math.random() * 100 - 50) + 'px');
+            snowflake.style.animationDelay = Math.random() * 5 + 's';
+            snowContainer.appendChild(snowflake);
+
+            setTimeout(() => {
+                snowflake.remove();
+            }, parseFloat(snowflake.style.animationDuration) * 1000 + 5000);
+        }
+
+        setInterval(createSnowflake, 300);
+        for (let i = 0; i < 30; i++) {
+            setTimeout(createSnowflake, i * 100);
+        }
+
+        // Tree setup
+        let pieces = [];
+        let isExploded = false;
+        let isRebuilding = false;
+
+        const colors = {
+            ruby: '#9b1b30',
+            sapphire: '#0f4c81',
+            amethyst: '#6a2c70',
+            gold: '#d4af37',
+            emerald: '#2d8b6d'
+        };
+
+        function createTree() {
+            const container = document.getElementById('container');
+            container.innerHTML = '';
+            pieces = [];
+
+            // Star
+            const star = createPiece('star', 230, 30);
+            const starGlow = document.createElement('div');
+            starGlow.className = 'star-glow';
+            star.element.appendChild(starGlow);
+            pieces.push(star);
+
+            // Tree layers with more detail
+            const layers = [
+                { y: 90, width: 80 },
+                { y: 130, width: 120 },
+                { y: 170, width: 160 },
+                { y: 210, width: 200 },
+                { y: 250, width: 240 },
+                { y: 290, width: 280 },
+                { y: 330, width: 320 },
+                { y: 370, width: 360 }
+            ];
+
+            layers.forEach((layer, index) => {
+                const branch = createPiece('branch', 250 - layer.width / 2, layer.y);
+                branch.element.style.borderLeftWidth = `${layer.width / 2}px`;
+                branch.element.style.borderRightWidth = `${layer.width / 2}px`;
+
+                const greenShades = ['#0d3b2e', '#1a5c47', '#2d8b6d'];
+                branch.element.style.borderBottomColor = greenShades[index % 3];
+
+                pieces.push(branch);
+
+                // Add ornaments
+                const numOrnaments = Math.floor(layer.width / 60) + 1;
+                for (let i = 0; i < numOrnaments; i++) {
+                    const ornamentX = 250 - layer.width / 2 + (layer.width / (numOrnaments + 1)) * (i + 1);
+                    const ornamentY = layer.y + 15 + Math.random() * 25;
+                    const ornament = createPiece('ornament', ornamentX - 11, ornamentY);
+
+                    const colorKeys = Object.keys(colors);
+                    const randomColor = colors[colorKeys[Math.floor(Math.random() * colorKeys.length)]];
+                    ornament.element.style.background = `linear-gradient(135deg, ${randomColor}, ${adjustBrightness(randomColor, -20)})`;
+                    ornament.element.style.color = randomColor;
+                    ornament.element.style.animationDelay = `${Math.random() * 3}s`;
+
+                    pieces.push(ornament);
+                }
+
+                // Add twinkling lights
+                const numLights = Math.floor(layer.width / 80);
+                for (let i = 0; i < numLights; i++) {
+                    const lightX = 250 - layer.width / 2 + (layer.width / (numLights + 1)) * (i + 1);
+                    const lightY = layer.y + 10 + Math.random() * 30;
+                    const light = createPiece('light', lightX - 8, lightY);
+
+                    const lightColors = ['rgba(255, 215, 0, 0.9)', 'rgba(255, 255, 255, 0.9)', 'rgba(155, 27, 48, 0.9)'];
+                    const lightColor = lightColors[Math.floor(Math.random() * lightColors.length)];
+                    light.element.style.background = lightColor;
+                    light.element.style.boxShadow = `0 0 15px ${lightColor}`;
+                    light.element.style.animationDelay = `${Math.random() * 2}s`;
+
+                    pieces.push(light);
+                }
+            });
+
+            // Trunk
+            const trunk = createPiece('trunk', 220, 410);
+            pieces.push(trunk);
+
+            pieces.forEach(piece => {
+                container.appendChild(piece.element);
+                setTimeout(() => {
+                    piece.element.classList.add('idle');
+                }, 2000);
+            });
+        }
+
+        function adjustBrightness(color, percent) {
+            const num = parseInt(color.replace('#', ''), 16);
+            const amt = Math.round(2.55 * percent);
+            const R = Math.min(255, Math.max(0, (num >> 16) + amt));
+            const G = Math.min(255, Math.max(0, (num >> 8 & 0x00FF) + amt));
+            const B = Math.min(255, Math.max(0, (num & 0x0000FF) + amt));
+            return '#' + (0x1000000 + R * 0x10000 + G * 0x100 + B).toString(16).slice(1);
+        }
+
+        function createPiece(className, x, y) {
+            const element = document.createElement('div');
+            element.className = `tree-piece ${className}`;
+            element.style.left = `${x}px`;
+            element.style.top = `${y}px`;
+
+            return {
+                element: element,
+                originalX: x,
+                originalY: y,
+                velocityX: 0,
+                velocityY: 0,
+                rotation: 0,
+                rotationSpeed: 0,
+                currentX: x,
+                currentY: y
+            };
+        }
+
+        function explode() {
+            if (isExploded || isRebuilding) return;
+            isExploded = true;
+
+            pieces.forEach(piece => {
+                piece.element.classList.remove('idle');
+            });
+
+            const centerX = 250;
+            const centerY = 250;
+
+            // Create explosion particles
+            for (let i = 0; i < 50; i++) {
+                createParticle(centerX, centerY);
+            }
+
+            pieces.forEach(piece => {
+                const pieceX = piece.originalX + (piece.element.offsetWidth / 2);
+                const pieceY = piece.originalY + (piece.element.offsetHeight / 2);
+
+                const angle = Math.atan2(pieceY - centerY, pieceX - centerX);
+                const distance = Math.sqrt(Math.pow(pieceX - centerX, 2) + Math.pow(pieceY - centerY, 2));
+                const force = 400 + Math.random() * 300;
+
+                piece.velocityX = Math.cos(angle) * (force + distance * 0.5);
+                piece.velocityY = Math.sin(angle) * (force + distance * 0.5);
+                piece.rotationSpeed = (Math.random() - 0.5) * 30;
+                piece.rotation = 0;
+            });
+
+            animateExplosion();
+
+            setTimeout(() => {
+                startRebuild();
+            }, 800);
+        }
+
+        function createParticle(x, y) {
+            const particle = document.createElement('div');
+            particle.className = 'particle';
+            particle.style.left = `${x}px`;
+            particle.style.top = `${y}px`;
+            document.getElementById('container').appendChild(particle);
+
+            const angle = Math.random() * Math.PI * 2;
+            const velocity = Math.random() * 300 + 200;
+            const vx = Math.cos(angle) * velocity;
+            const vy = Math.sin(angle) * velocity;
+
+            let px = x;
+            let py = y;
+            let life = 1;
+
+            function animateParticle() {
+                px += vx * 0.016;
+                py += vy * 0.016;
+                life -= 0.02;
+
+                particle.style.left = `${px}px`;
+                particle.style.top = `${py}px`;
+                particle.style.opacity = life;
+
+                if (life > 0) {
+                    requestAnimationFrame(animateParticle);
+                } else {
+                    particle.remove();
+                }
+            }
+
+            animateParticle();
+        }
+
+        function animateExplosion() {
+            if (!isExploded) return;
+
+            pieces.forEach(piece => {
+                piece.velocityY += 3;
+                piece.rotation += piece.rotationSpeed;
+
+                piece.currentX += piece.velocityX * 0.04;
+                piece.currentY += piece.velocityY * 0.04;
+
+                piece.element.style.left = `${piece.currentX}px`;
+                piece.element.style.top = `${piece.currentY}px`;
+                piece.element.style.transform = `rotate(${piece.rotation}deg)`;
+                piece.element.style.opacity = Math.max(0, 1 - (piece.currentY / 900));
+            });
+
+            requestAnimationFrame(animateExplosion);
+        }
+
+        function startRebuild() {
+            isExploded = false;
+            isRebuilding = true;
+
+            const rebuildDuration = 1200;
+            const startTime = Date.now();
+
+            pieces.forEach(piece => {
+                piece.startX = piece.currentX;
+                piece.startY = piece.currentY;
+                piece.startRotation = piece.rotation;
+            });
+
+            animateRebuild(startTime, rebuildDuration);
+        }
+
+        function animateRebuild(startTime, duration) {
+            if (!isRebuilding) return;
+
+            const elapsed = Date.now() - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            const easeProgress = easeOutElastic(progress);
+
+            pieces.forEach(piece => {
+                piece.currentX = piece.startX + (piece.originalX - piece.startX) * easeProgress;
+                piece.currentY = piece.startY + (piece.originalY - piece.startY) * easeProgress;
+                piece.rotation = piece.startRotation * (1 - easeProgress);
+
+                piece.element.style.left = `${piece.currentX}px`;
+                piece.element.style.top = `${piece.currentY}px`;
+                piece.element.style.transform = `rotate(${piece.rotation}deg)`;
+                piece.element.style.opacity = Math.min(1, progress * 1.5);
+            });
+
+            if (progress < 1) {
+                requestAnimationFrame(() => animateRebuild(startTime, duration));
+            } else {
+                isRebuilding = false;
+                pieces.forEach(piece => {
+                    piece.element.classList.add('idle');
+                });
+            }
+        }
+
+        function easeOutElastic(x) {
+            const c4 = (2 * Math.PI) / 3;
+            return x === 0
+                ? 0
+                : x === 1
+                ? 1
+                : Math.pow(2, -10 * x) * Math.sin((x * 10 - 0.75) * c4) + 1;
+        }
+
+        // Initialize
+        createTree();
+
+        // Click to explode
+        document.getElementById('container').addEventListener('click', explode);
+    </script>
+</body>
+</html>
