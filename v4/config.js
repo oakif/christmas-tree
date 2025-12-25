@@ -1,21 +1,93 @@
+/**
+ * Christmas Tree Configuration
+ *
+ * OBJECTS:
+ * Define particles using the objects array. Each object creates a set of particles.
+ *
+ * Required properties:
+ *   - type: 'star' | 'heart' | 'snowflake' | 'present'
+ *   - count: number of particles to create
+ *
+ * Optional properties (with defaults):
+ *   - scale: 1.0 (size multiplier)
+ *   - color: 0xffffff (base color)
+ *   - emissive: 0x000000 (glow color)
+ *   - emissiveIntensity: 0.0 (glow strength, affects bloom)
+ *   - metalness: 0.5 (0 = matte, 1 = metallic)
+ *   - roughness: 0.5 (0 = smooth, 1 = rough)
+ *
+ * TIP: To create multiple variants (e.g., different colored presents),
+ * create separate object definitions.
+ */
 export const CONFIG = {
     // --- TREE APPEARANCE ---
-    particleCount: 2000,
     treeHeight: 40,
     treeRadius: 18,
     treeYOffset: 3,        // Shift the entire tree up (+) or down (-)
 
-    // --- OBJECT SIZES ---
-    starScale: 1.2,        // Size multiplier for stars
-    heartScale: 0.8,       // Size multiplier for hearts
-    presentScale: 0.8,     // Size multiplier for presents/boxes
-    snowflakeScale: 1.0,   // Size multiplier for snowflakes
-
-    // --- COLORS ---
-    colorPresents: [0xff3333, 0x33ff33, 0x3333ff],
-    colorHearts: 0xff0055,
-    colorStar: 0xfffea8,   // Very subtle warm white
-    starEmissiveIntensity: 0.5, // How much stars glow (0 = no glow, 1 = full)
+    // --- OBJECTS ---
+    objects: [
+        {
+            type: 'star',
+            count: 400,
+            scale: 1.0,
+            color: 0xfffea8,
+            emissive: 0xfffea8,
+            emissiveIntensity: 0.5,
+            metalness: 0.3,
+            roughness: 0.4
+        },
+        {
+            type: 'heart',
+            count: 600,
+            scale: 0.8,
+            color: 0xff0055,
+            emissive: 0x220011,
+            emissiveIntensity: 0.15,
+            metalness: 0.0,
+            roughness: 0.35
+        },
+        // {
+        //     type: 'snowflake',
+        //     count: 1200,
+        //     scale: 1.0,
+        //     color: 0xf0f8ff,
+        //     emissive: 0x88aacc,
+        //     emissiveIntensity: 0.15,
+        //     metalness: 0.1,
+        //     roughness: 0.3
+        // },
+        {
+            type: 'present',
+            count: 133,
+            scale: 0.8,
+            color: 0xff3333,
+            emissive: 0xff3333,
+            emissiveIntensity: 0.05,
+            metalness: 0.2,
+            roughness: 0.4
+        },
+        {
+            type: 'present',
+            count: 133,
+            scale: 0.8,
+            color: 0x33ff33,
+            emissive: 0x33ff33,
+            emissiveIntensity: 0.05,
+            metalness: 0.2,
+            roughness: 0.4
+        },
+        {
+            type: 'present',
+            count: 134,
+            scale: 0.8,
+            color: 0x3333ff,
+            emissive: 0x3333ff,
+            emissiveIntensity: 0.05,
+            metalness: 0.2,
+            roughness: 0.4
+        }
+    ],
 
     // --- ANIMATION / PHYSICS ---
     animationSpeed: 0.12,      // Unified speed for explosion spread and return (0.01 = slow, 0.2 = fast)

@@ -189,44 +189,68 @@ function createHeartGeometry() {
 }
 const geomHeart = createHeartGeometry();
 
-// --- IMPROVED MATERIALS ---
-// Star material - subtle glow, not overly bright
-const starMaterial = new THREE.MeshStandardMaterial({
-    color: CONFIG.colorStar,
-    emissive: CONFIG.colorStar,
-    emissiveIntensity: CONFIG.starEmissiveIntensity,
-    metalness: 0.3,
-    roughness: 0.4
-});
+// --- OBJECT SYSTEM HELPERS ---
+// Default values for optional object properties
+const OBJECT_DEFAULTS = {
+    scale: 1.0,
+    color: 0xffffff,
+    emissive: 0x000000,
+    emissiveIntensity: 0.0,
+    metalness: 0.5,
+    roughness: 0.5
+};
 
-// Heart material - smooth glossy red (reduced metalness for softer reflections)
-const heartMaterial = new THREE.MeshStandardMaterial({
-    color: CONFIG.colorHearts,
-    emissive: 0x220011,
-    emissiveIntensity: 0.15,
-    metalness: 0.0,
-    roughness: 0.35
-});
+// Material caching to prevent duplicate instances
+const materialCache = new Map();
 
-// Snowflake material - icy crystalline white
-const snowflakeMaterial = new THREE.MeshStandardMaterial({
-    color: 0xf0f8ff,
-    emissive: 0x88aacc,
-    emissiveIntensity: 0.15,
-    metalness: 0.1,
-    roughness: 0.3,
-    side: THREE.DoubleSide // Visible from both sides since snowflakes are thin
-});
+function validateAndMergeObjectDef(objectDef) {
+    if (!objectDef.type) {
+        throw new Error('Object definition must have a type');
+    }
+    if (objectDef.count === undefined || objectDef.count < 0) {
+        throw new Error('Object definition must have a valid count');
+    }
+    return { ...OBJECT_DEFAULTS, ...objectDef };
+}
 
-// Present materials - varied glossy colors
-function createPresentMaterial(color) {
-    return new THREE.MeshStandardMaterial({
-        color: color,
-        emissive: color,
-        emissiveIntensity: 0.05,
-        metalness: 0.2,
-        roughness: 0.4
+function getGeometryForType(type) {
+    const geometries = {
+        'star': geomStar,
+        'heart': geomHeart,
+        'snowflake': geomSnowflake,
+        'present': geomGiftBox
+    };
+
+    if (!geometries[type]) {
+        console.warn(`Unknown geometry type: ${type}, falling back to star`);
+        return geometries['star'];
+    }
+
+    return geometries[type];
+}
+
+function getMaterialFromDefinition(def) {
+    // Cache materials by unique properties to avoid duplicates
+    const key = JSON.stringify({
+        color: def.color,
+        emissive: def.emissive,
+        emissiveIntensity: def.emissiveIntensity,
+        metalness: def.metalness,
+        roughness: def.roughness
     });
+
+    if (!materialCache.has(key)) {
+        materialCache.set(key, new THREE.MeshStandardMaterial({
+            color: def.color,
+            emissive: def.emissive,
+            emissiveIntensity: def.emissiveIntensity,
+            metalness: def.metalness,
+            roughness: def.roughness,
+            side: def.type === 'snowflake' ? THREE.DoubleSide : THREE.FrontSide
+        }));
+    }
+
+    return materialCache.get(key);
 }
 
 // --- DENSITY-CORRECTED PARTICLE DISTRIBUTION ---
@@ -294,59 +318,48 @@ const particles = [];
 const treeGroup = new THREE.Group();
 scene.add(treeGroup);
 
-// Pre-generate explosion targets
-// Determine explosion center based on mode
+// Pre-generate explosion targets - calculate total count first
+const totalParticleCount = CONFIG.objects.reduce((sum, obj) => sum + obj.count, 0);
 const explosionCenter = CONFIG.explosionCenterMode === 'camera'
     ? new THREE.Vector3(camera.position.x, camera.position.y, camera.position.z)
-    : new THREE.Vector3(0, 0, 0); // Tree center at origin
+    : new THREE.Vector3(0, 0, 0);
+const explosionTargets = generateExplosionTargets(totalParticleCount, explosionCenter);
 
-const explosionTargets = generateExplosionTargets(CONFIG.particleCount, explosionCenter);
+let explosionTargetIndex = 0;
 
-for (let i = 0; i < CONFIG.particleCount; i++) {
-    let mesh;
-    const rand = Math.random();
+// Create particles from object definitions
+CONFIG.objects.forEach(objectDef => {
+    const fullDef = validateAndMergeObjectDef(objectDef);
+    const geometry = getGeometryForType(fullDef.type);
+    const material = getMaterialFromDefinition(fullDef);
 
-    if (rand > 0.90) { // Star (10%)
-        mesh = new THREE.Mesh(geomStar, starMaterial);
-        mesh.scale.setScalar(CONFIG.starScale);
+    for (let i = 0; i < fullDef.count; i++) {
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.scale.setScalar(fullDef.scale);
+
+        // Use density-corrected position
+        const pos = sampleTreePosition();
+
+        mesh.userData = {
+            originalPos: pos.clone(),
+            explosionTarget: explosionTargets[explosionTargetIndex++],
+            velocity: new THREE.Vector3(0, 0, 0),
+            rotSpeed: {
+                x: (Math.random() - 0.5) * 0.02,
+                y: (Math.random() - 0.5) * 0.02,
+                z: (Math.random() - 0.5) * 0.02
+            },
+            individualParallaxShift: new THREE.Vector3(0, 0, 0),
+            baseParallaxSensitivity: 0.5 + Math.random() * 1.0
+        };
+
+        mesh.position.copy(pos);
+        mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+
+        treeGroup.add(mesh);
+        particles.push(mesh);
     }
-    else if (rand > 0.80) { // Heart (10%)
-        mesh = new THREE.Mesh(geomHeart, heartMaterial);
-        mesh.scale.setScalar(CONFIG.heartScale);
-        mesh.rotation.z = Math.PI;
-    }
-    else if (rand > 0.60) { // Presents (20%)
-        const c = CONFIG.colorPresents[Math.floor(Math.random() * CONFIG.colorPresents.length)];
-        mesh = new THREE.Mesh(geomGiftBox, createPresentMaterial(c));
-        mesh.scale.setScalar(CONFIG.presentScale);
-    }
-    else { // Snowflakes (60%)
-        mesh = new THREE.Mesh(geomSnowflake, snowflakeMaterial);
-        mesh.scale.setScalar(CONFIG.snowflakeScale);
-    }
-
-    // Use density-corrected position
-    const pos = sampleTreePosition();
-
-    mesh.userData = {
-        originalPos: pos.clone(),
-        explosionTarget: explosionTargets[i],
-        velocity: new THREE.Vector3(0, 0, 0),
-        rotSpeed: {
-            x: (Math.random() - 0.5) * 0.02,
-            y: (Math.random() - 0.5) * 0.02,
-            z: (Math.random() - 0.5) * 0.02
-        },
-        individualParallaxShift: new THREE.Vector3(0, 0, 0),
-        baseParallaxSensitivity: 0.5 + Math.random() * 1.0 // Each particle responds slightly differently
-    };
-
-    mesh.position.copy(pos);
-    mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
-
-    treeGroup.add(mesh);
-    particles.push(mesh);
-}
+});
 
 // --- IMPROVED LIGHTING ---
 // Darker ambient for more contrast
