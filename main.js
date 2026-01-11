@@ -596,7 +596,8 @@ document.getElementById('password-input').addEventListener('keydown', (e) => {
 });
 
 // Settings modal event listeners
-document.getElementById('settings-icon').addEventListener('click', () => {
+document.getElementById('settings-icon').addEventListener('click', (e) => {
+    e.stopPropagation();
     showSettingsModal();
 });
 
@@ -614,11 +615,14 @@ document.getElementById('settings-image-set').addEventListener('change', async (
     }
 });
 
+// Prevent clicks on settings modal from triggering tree explosion
+document.getElementById('settings-modal').addEventListener('mousedown', (e) => {
+    e.stopPropagation();
+});
+
 // Cancel auto-close on any interaction with settings modal
-document.getElementById('settings-modal').addEventListener('click', (e) => {
-    if (e.target.closest('.modal-content')) {
-        cancelSettingsAutoClose();
-    }
+document.getElementById('settings-modal').addEventListener('click', () => {
+    cancelSettingsAutoClose();
 });
 
 // Initialize image sets on startup
