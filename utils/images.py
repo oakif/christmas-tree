@@ -133,7 +133,7 @@ def regenerate_master_manifest():
         json.dump(master_manifest, f, indent=2)
 
 
-def cmd_add(source_folder: Path, set_name: str, encrypt: bool):
+def cmd_add(source_folder: Path, set_name: str, encrypt: bool, password: str | None = None):
     """Add images from source folder to a new image set."""
     images_dir = get_images_dir()
     set_id = set_name.lower().replace(' ', '-')
@@ -152,13 +152,14 @@ def cmd_add(source_folder: Path, set_name: str, encrypt: bool):
     output_folder.mkdir(parents=True, exist_ok=True)
 
     if encrypt:
-        password = getpass('Enter encryption password: ')
-        confirm = getpass('Confirm password: ')
+        if password is None:
+            password = getpass('Enter encryption password: ')
+            confirm = getpass('Confirm password: ')
 
-        if password != confirm:
-            print('Passwords do not match')
-            shutil.rmtree(output_folder)
-            sys.exit(1)
+            if password != confirm:
+                print('Passwords do not match')
+                shutil.rmtree(output_folder)
+                sys.exit(1)
 
         if not password:
             print('Password cannot be empty')
@@ -280,11 +281,18 @@ def main():
         set_name = sys.argv[3]
         encrypt = '--encrypt' in sys.argv
 
+        # Check for --password argument
+        password = None
+        for i, arg in enumerate(sys.argv):
+            if arg == '--password' and i + 1 < len(sys.argv):
+                password = sys.argv[i + 1]
+                break
+
         if not source_folder.is_dir():
             print(f'Source folder not found: {source_folder}')
             sys.exit(1)
 
-        cmd_add(source_folder, set_name, encrypt)
+        cmd_add(source_folder, set_name, encrypt, password)
 
     elif command == 'remove':
         if len(sys.argv) < 3:
