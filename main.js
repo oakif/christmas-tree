@@ -13,6 +13,17 @@ import { state } from './js/state.js';
 import { initGeometries, getGeometryForType } from './js/particles/geometry.js';
 import { sampleTreePosition, generateExplosionTargets } from './js/particles/distribution.js';
 import {
+    getMaterialFromDefinition,
+    validateAndMergeObjectDef,
+} from './js/particles/materials.js';
+import {
+    createDefaultTestConfig,
+    createParticleUserData,
+    rebuildTreeParticles as rebuildTreeParticlesFn,
+    rebuildAllTestParticles as rebuildAllTestParticlesFn,
+    rebuildAllParticles as rebuildAllParticlesFn,
+} from './js/particles/particles.js';
+import {
     createScene,
     createPerspectiveCamera,
     createOrthographicCamera,
@@ -655,174 +666,8 @@ state.bloomPass = bloomPass;
 // Geometries are now loaded from js/particles/geometry.js
 initGeometries();
 
-// --- OBJECT SYSTEM HELPERS ---
-// Default values for optional object properties
-const OBJECT_DEFAULTS = {
-    scale: 1.0,
-    color: 0xffffff,
-    emissive: 0x000000,
-    emissiveIntensity: 0.0,
-    metalness: 0.5,              // Only used for non-configured materials
-    roughness: 0.5,              // Only used for non-configured materials
-    materialType: 'matte',       // Default material type
-    materialOverrides: {}        // Material property overrides
-};
-
-// Material caching to prevent duplicate instances
-const materialCache = new Map();
-
-function validateAndMergeObjectDef(objectDef) {
-    if (!objectDef.type) {
-        throw new Error('Object definition must have a type');
-    }
-    if (objectDef.count === undefined || objectDef.count < 0) {
-        throw new Error('Object definition must have a valid count');
-    }
-    return { ...OBJECT_DEFAULTS, ...objectDef };
-}
-
-// getGeometryForType is now imported from js/particles/geometry.js
-
-function getMaterialFromDefinition(def) {
-    const useMaterialPreset = def.materialType !== null && def.materialType !== undefined;
-
-    // Build cache key
-    const cacheKeyBase = {
-        color: def.color,
-        emissive: def.emissive,
-        emissiveIntensity: def.emissiveIntensity,
-    };
-
-    let key;
-    if (useMaterialPreset) {
-        const materialProps = {
-            ...CONFIG.materialDefaults,
-            ...(CONFIG.materialPresets[def.materialType] || {}),
-            ...(def.materialOverrides || {})
-        };
-        key = JSON.stringify({
-            ...cacheKeyBase,
-            materialType: def.materialType,
-            performanceMode: CONFIG.performanceMode,
-            materialProps: materialProps
-        });
-    } else {
-        // Legacy fallback for objects without materialType
-        key = JSON.stringify({
-            ...cacheKeyBase,
-            metalness: def.metalness,
-            roughness: def.roughness
-        });
-    }
-
-    if (materialCache.has(key)) {
-        return materialCache.get(key);
-    }
-
-    // Create new material
-    let material;
-    if (useMaterialPreset) {
-        const materialProps = {
-            ...CONFIG.materialDefaults,
-            ...(CONFIG.materialPresets[def.materialType] || {}),
-            ...(def.materialOverrides || {})
-        };
-
-        // Determine which material class to use
-        const materialClass = materialProps.materialClass || 'Standard';
-
-        if (materialClass === 'Physical') {
-            // Use Physical material for glass types
-            material = CONFIG.performanceMode
-                ? createPerformanceMaterial(def, materialProps)
-                : createPhysicalMaterial(def, materialProps);
-        } else {
-            // Use Standard material for matte, satin, metallic
-            material = createStandardMaterial(def, materialProps);
-        }
-    } else {
-        // Legacy fallback
-        material = new THREE.MeshStandardMaterial({
-            color: def.color,
-            emissive: def.emissive,
-            emissiveIntensity: def.emissiveIntensity,
-            metalness: def.metalness,
-            roughness: def.roughness,
-            side: def.type === 'snowflake' ? THREE.DoubleSide : THREE.FrontSide
-        });
-    }
-
-    materialCache.set(key, material);
-    return material;
-}
-
-function createPhysicalMaterial(def, materialProps) {
-    return new THREE.MeshPhysicalMaterial({
-        color: def.color,
-        emissive: def.emissive,
-        emissiveIntensity: def.emissiveIntensity,
-
-        // Material properties
-        transmission: materialProps.transmission || 0,
-        thickness: materialProps.thickness || 0,
-        roughness: materialProps.roughness,
-        metalness: materialProps.metalness || 0,
-        clearcoat: materialProps.clearcoat || 0,
-        clearcoatRoughness: materialProps.clearcoatRoughness || 0,
-        ior: materialProps.ior || 1.5,
-
-        envMap: envMap,
-        envMapIntensity: materialProps.envMapIntensity || 1.0,
-
-        side: def.type === 'snowflake' ? THREE.DoubleSide : THREE.FrontSide,
-        transparent: materialProps.transmission > 0,
-        opacity: 1.0,
-    });
-}
-
-function createPerformanceMaterial(def, materialProps) {
-    // Performance mode: Fake transparency with MeshStandardMaterial
-    const opacity = materialProps.transmission > 0
-        ? 0.4 + (1 - materialProps.transmission) * 0.6  // Map transmission to opacity
-        : 1.0;
-
-    return new THREE.MeshStandardMaterial({
-        color: def.color,
-        emissive: def.emissive,
-        emissiveIntensity: def.emissiveIntensity,
-
-        metalness: materialProps.metalness || 0.1,
-        roughness: materialProps.roughness,
-        envMap: envMap,
-        envMapIntensity: materialProps.envMapIntensity || 1.0,
-
-        transparent: materialProps.transmission > 0,
-        opacity: opacity,
-
-        side: def.type === 'snowflake' ? THREE.DoubleSide : THREE.FrontSide,
-    });
-}
-
-function createStandardMaterial(def, materialProps) {
-    return new THREE.MeshStandardMaterial({
-        color: def.color,
-        emissive: def.emissive,
-        emissiveIntensity: def.emissiveIntensity,
-
-        // Material properties
-        roughness: materialProps.roughness,
-        metalness: materialProps.metalness || 0,
-
-        envMap: envMap,
-        envMapIntensity: materialProps.envMapIntensity || 1.0,
-
-        side: def.type === 'snowflake' ? THREE.DoubleSide : THREE.FrontSide,
-        transparent: false,
-    });
-}
-
-// --- PARTICLE DISTRIBUTION ---
-// sampleTreePosition and generateExplosionTargets are now imported from js/particles/distribution.js
+// --- MATERIALS & PARTICLES ---
+// Material and particle functions are now imported from js/particles/materials.js and js/particles/particles.js
 
 // --- CREATE PARTICLES ---
 const particles = [];
@@ -842,7 +687,7 @@ let explosionTargetIndex = 0;
 CONFIG.objects.forEach(objectDef => {
     const fullDef = validateAndMergeObjectDef(objectDef);
     const geometry = getGeometryForType(fullDef.type);
-    const material = getMaterialFromDefinition(fullDef);
+    const material = getMaterialFromDefinition(fullDef, CONFIG, envMap);
 
     for (let i = 0; i < fullDef.count; i++) {
         const mesh = new THREE.Mesh(geometry, material);
@@ -885,209 +730,21 @@ const rimLight = lights.rim;
 const overheadLight = lights.overhead;
 const topGlow = lights.topGlow;
 
-// --- TEST MATERIAL SYSTEM ---
-// Test objects that replace the tree, using the same distribution and animation logic
+// --- TEST PARTICLES ---
 const testParticles = [];
-
-// Array of test object groups (each group has its own config and particles)
 const testObjectGroups = [];
 
-function createDefaultTestConfig() {
-    return {
-        count: 0,
-        shape: 'star',
-        materialType: 'glass',
-        scale: 1.0,
-        color: '#ffffff',
-        emissive: '#000000',
-        emissiveIntensity: 0.0,
-        transmission: 0.9,
-        thickness: 10.0,
-        roughness: 0.15,
-        metalness: 0.0,
-        clearcoat: 0.0,
-        clearcoatRoughness: 0.0,
-        ior: 1.5,
-        envMapIntensity: 1.5,
-        particles: []
-    };
-}
-
-function createTestParticle(config, explosionTarget) {
-    const geometry = getGeometryForType(config.shape);
-
-    // Build material overrides - only include properties that are explicitly different from preset defaults
-    const materialOverrides = {};
-
-    // Only add override if the value differs from the default for this material type
-    const preset = CONFIG.materialPresets[config.materialType] || {};
-
-    if (config.transmission !== undefined && config.transmission !== (preset.transmission ?? CONFIG.materialDefaults.transmission)) {
-        materialOverrides.transmission = config.transmission;
-    }
-    if (config.thickness !== undefined && config.thickness !== (preset.thickness ?? CONFIG.materialDefaults.thickness)) {
-        materialOverrides.thickness = config.thickness;
-    }
-    if (config.roughness !== undefined && config.roughness !== (preset.roughness ?? CONFIG.materialDefaults.roughness)) {
-        materialOverrides.roughness = config.roughness;
-    }
-    if (config.metalness !== undefined && config.metalness !== (preset.metalness ?? CONFIG.materialDefaults.metalness)) {
-        materialOverrides.metalness = config.metalness;
-    }
-    if (config.clearcoat !== undefined && config.clearcoat !== (preset.clearcoat ?? CONFIG.materialDefaults.clearcoat)) {
-        materialOverrides.clearcoat = config.clearcoat;
-    }
-    if (config.clearcoatRoughness !== undefined && config.clearcoatRoughness !== (preset.clearcoatRoughness ?? CONFIG.materialDefaults.clearcoatRoughness)) {
-        materialOverrides.clearcoatRoughness = config.clearcoatRoughness;
-    }
-    if (config.ior !== undefined && config.ior !== (preset.ior ?? CONFIG.materialDefaults.ior)) {
-        materialOverrides.ior = config.ior;
-    }
-    if (config.envMapIntensity !== undefined && config.envMapIntensity !== (preset.envMapIntensity ?? CONFIG.materialDefaults.envMapIntensity)) {
-        materialOverrides.envMapIntensity = config.envMapIntensity;
-    }
-
-    const materialDef = {
-        type: config.shape,
-        color: parseInt(config.color.replace('#', ''), 16),
-        emissive: parseInt(config.emissive.replace('#', ''), 16),
-        emissiveIntensity: config.emissiveIntensity,
-        materialType: config.materialType,
-        materialOverrides: materialOverrides
-    };
-
-    const material = getMaterialFromDefinition(materialDef);
-
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.scale.setScalar(config.scale);
-
-    const pos = sampleTreePosition(CONFIG);
-    mesh.position.copy(pos);
-
-    mesh.userData = {
-        originalPos: pos.clone(),
-        explosionTarget: explosionTarget,
-        velocity: new THREE.Vector3(0, 0, 0),
-        rotSpeed: {
-            x: (Math.random() - 0.5) * 0.02,
-            y: (Math.random() - 0.5) * 0.02,
-            z: (Math.random() - 0.5) * 0.02
-        },
-        individualParallaxShift: new THREE.Vector3(0, 0, 0),
-        baseParallaxSensitivity: 0.5 + Math.random() * 1.0
-    };
-
-    mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
-
-    treeGroup.add(mesh);
-    testParticles.push(mesh);
-    return mesh;
-}
-
+// Wrapper functions that call the imported particle functions with local context
 function rebuildTreeParticles() {
-    // Remove all existing tree particles
-    particles.forEach(mesh => {
-        treeGroup.remove(mesh);
-        // Don't dispose shared geometries
-        mesh.material.dispose();
-    });
-    particles.length = 0;
-
-    // Calculate total particle count from CONFIG.objects
-    const totalParticleCount = CONFIG.objects.reduce((sum, obj) => sum + obj.count, 0);
-    const explosionCenter = CONFIG.explosionCenterMode === 'camera'
-        ? new THREE.Vector3(camera.position.x, camera.position.y, camera.position.z)
-        : new THREE.Vector3(0, 0, 0);
-    const explosionTargets = generateExplosionTargets(totalParticleCount, explosionCenter, CONFIG);
-
-    let explosionTargetIndex = 0;
-
-    // Recreate particles from object definitions
-    CONFIG.objects.forEach(objectDef => {
-        const fullDef = validateAndMergeObjectDef(objectDef);
-        const geometry = getGeometryForType(fullDef.type);
-        const material = getMaterialFromDefinition(fullDef);
-
-        for (let i = 0; i < fullDef.count; i++) {
-            const mesh = new THREE.Mesh(geometry, material);
-            mesh.scale.setScalar(fullDef.scale);
-
-            const pos = sampleTreePosition(CONFIG);
-
-            mesh.userData = {
-                originalPos: pos.clone(),
-                explosionTarget: explosionTargets[explosionTargetIndex++],
-                velocity: new THREE.Vector3(0, 0, 0),
-                rotSpeed: {
-                    x: (Math.random() - 0.5) * 0.02,
-                    y: (Math.random() - 0.5) * 0.02,
-                    z: (Math.random() - 0.5) * 0.02
-                },
-                individualParallaxShift: new THREE.Vector3(0, 0, 0),
-                baseParallaxSensitivity: 0.5 + Math.random() * 1.0
-            };
-
-            mesh.position.copy(pos);
-            mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
-
-            treeGroup.add(mesh);
-            particles.push(mesh);
-        }
-    });
-
-    // Update visibility based on test objects
-    const hasTestObjects = testObjectGroups.reduce((sum, g) => sum + g.count, 0) > 0;
-    particles.forEach(p => {
-        p.visible = CONFIG.showTreeParticles && !hasTestObjects;
-    });
+    rebuildTreeParticlesFn(particles, treeGroup, testObjectGroups, camera, CONFIG, envMap, guiControls);
 }
 
 function rebuildAllTestParticles() {
-    // Clear material cache before rebuilding
-    materialCache.clear();
-
-    // Remove all test particles
-    testParticles.forEach(mesh => {
-        treeGroup.remove(mesh);
-        mesh.geometry.dispose();
-        mesh.material.dispose();
-    });
-    testParticles.length = 0;
-
-    // Clear all group particles
-    testObjectGroups.forEach(group => {
-        group.particles = [];
-    });
-
-    // Calculate total particle count
-    const totalCount = testObjectGroups.reduce((sum, group) => sum + group.count, 0);
-
-    // Generate explosion targets for all particles
-    const explosionCenter = CONFIG.explosionCenterMode === 'camera'
-        ? new THREE.Vector3(camera.position.x, camera.position.y, camera.position.z)
-        : new THREE.Vector3(0, 0, 0);
-    const explosionTargets = generateExplosionTargets(totalCount, explosionCenter, CONFIG);
-
-    // Recreate all particles for all groups
-    let targetIndex = 0;
-    testObjectGroups.forEach(group => {
-        for (let i = 0; i < group.count; i++) {
-            const mesh = createTestParticle(group, explosionTargets[targetIndex++]);
-            group.particles.push(mesh);
-        }
-    });
-
-    // Update tree visibility
-    const hasTestObjects = totalCount > 0;
-    particles.forEach(p => {
-        p.visible = !hasTestObjects && guiControls.showTreeParticles;
-    });
+    rebuildAllTestParticlesFn(testParticles, testObjectGroups, particles, treeGroup, camera, CONFIG, envMap, guiControls);
 }
 
 function rebuildAllParticles() {
-    materialCache.clear();
-    rebuildTreeParticles();
-    rebuildAllTestParticles();
+    rebuildAllParticlesFn(particles, testParticles, testObjectGroups, treeGroup, camera, CONFIG, envMap, guiControls);
 }
 
 // --- DAT.GUI FOR ALL CONFIG SETTINGS ---
