@@ -1,0 +1,17 @@
+{
+  "sets": [
+    {
+      "id": "cats",
+      "name": "Cats",
+      "path": "cats/",
+      "encrypted": false
+    },
+    {
+      "id": "yz",
+      "name": "YZ",
+      "path": "yz/",
+      "encrypted": true
+    }
+  ],
+  "defaultSet": "cats"
+}
