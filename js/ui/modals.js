@@ -176,11 +176,17 @@ function setupPasswordModalListeners() {
 }
 
 function setupSettingsModalListeners() {
-    document.getElementById('settings-icon').addEventListener('mousedown', (e) => {
+    const settingsIcon = document.getElementById('settings-icon');
+
+    settingsIcon.addEventListener('mousedown', (e) => {
         e.stopPropagation();
     });
 
-    document.getElementById('settings-icon').addEventListener('click', (e) => {
+    settingsIcon.addEventListener('touchstart', (e) => {
+        e.stopPropagation();
+    }, { passive: true });
+
+    settingsIcon.addEventListener('click', (e) => {
         e.stopPropagation();
         showSettingsModal();
     });
@@ -219,10 +225,14 @@ function setupSettingsModalListeners() {
         }
     });
 
-    // Prevent clicks on settings modal from triggering tree explosion
-    document.getElementById('settings-modal').addEventListener('mousedown', (e) => {
+    // Prevent clicks/taps on settings modal from triggering tree explosion
+    const settingsModal = document.getElementById('settings-modal');
+    settingsModal.addEventListener('mousedown', (e) => {
         e.stopPropagation();
     });
+    settingsModal.addEventListener('touchstart', (e) => {
+        e.stopPropagation();
+    }, { passive: true });
 
     // Cancel auto-close on any interaction with settings modal content
     // Click on overlay (outside modal-content) dismisses the modal
