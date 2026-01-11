@@ -24,6 +24,9 @@ const touchRotationOffset = new THREE.Vector2(0, 0);
 const touchVelocity = new THREE.Vector2(0, 0);
 let isTouching = false;
 let lastTouchMoveFrame = 0; // Track when last touchmove occurred
+// For smooth velocity blending on touch start
+let storedMomentum = null;
+let touchMoveCount = 0;
 
 export function initMouseTracking(configRef) {
     CONFIG = configRef;
@@ -95,9 +98,10 @@ function handleTouchStart(event) {
     const touch = event.touches[0];
     lastTouchPos = { x: touch.clientX, y: touch.clientY };
     isTouching = true;
-    // Keep existing momentum - don't reset velocity
-    // The swipe will act as a "speed limit" - only increase if swiping faster
-    console.log('[touchstart] grabbing tree, keeping velocity', { velocity: { x: touchVelocity.x.toFixed(4), y: touchVelocity.y.toFixed(4) } });
+    // Store current momentum for smooth blending
+    storedMomentum = { x: touchVelocity.x, y: touchVelocity.y };
+    touchMoveCount = 0;
+    console.log('[touchstart] grabbing tree, stored momentum', { velocity: { x: touchVelocity.x.toFixed(4), y: touchVelocity.y.toFixed(4) } });
 }
 
 function handleTouchMove(event) {
@@ -128,8 +132,18 @@ function handleTouchMove(event) {
         filteredY = deltaY * 0.5;
     }
 
-    touchVelocity.x = filteredX;
-    touchVelocity.y = filteredY;
+    // Smooth velocity blending: blend stored momentum with new drag on first few frames
+    touchMoveCount++;
+    const blendFrames = 5;
+
+    if (touchMoveCount <= blendFrames && storedMomentum) {
+        const blend = touchMoveCount / blendFrames;
+        touchVelocity.x = storedMomentum.x * (1 - blend) + filteredX * blend;
+        touchVelocity.y = storedMomentum.y * (1 - blend) + filteredY * blend;
+    } else {
+        touchVelocity.x = filteredX;
+        touchVelocity.y = filteredY;
+    }
     lastTouchMoveFrame = performance.now();
 
     console.log('[touchmove] velocity:', { x: touchVelocity.x.toFixed(4), y: touchVelocity.y.toFixed(4) });
