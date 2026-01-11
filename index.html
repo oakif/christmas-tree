@@ -113,12 +113,31 @@
             margin-top: -8px;
             margin-bottom: 12px;
         }
+
+        /* Settings icon */
+        #settings-icon {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            z-index: 15000;
+            background: transparent;
+            border: none;
+            font-size: 32px;
+            color: white;
+            opacity: 0.5;
+            cursor: pointer;
+            padding: 0;
+        }
+        #settings-icon:hover {
+            opacity: 0.75;
+        }
     </style>
 </head>
 <body>
 
     <div id="canvas-container"></div>
     <img id="showcase-image" alt="Surprise!">
+    <button id="settings-icon" title="Settings">&#9881;</button>
     <div id="fps-counter">
         <div id="fps-text">FPS: 0</div>
         <canvas id="fps-graph"></canvas>
