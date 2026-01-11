@@ -513,6 +513,9 @@ function showSettingsModal(withCountdown = false) {
     // Sync reassemble checkbox with current config
     document.getElementById('settings-reassemble').checked = CONFIG.reassembleOnClick;
 
+    // Hide password row when opening modal
+    hideSettingsPasswordRow();
+
     const closeBtn = document.getElementById('settings-close');
 
     // Only start auto-close countdown on initial page load
@@ -552,6 +555,27 @@ function cancelSettingsAutoClose() {
         // Update button text when countdown is cancelled
         document.getElementById('settings-close').textContent = 'Save';
     }
+}
+
+// Settings password row functions
+function showSettingsPasswordRow(set) {
+    const row = document.getElementById('settings-password-row');
+    const setName = document.getElementById('settings-password-set-name');
+    const input = document.getElementById('settings-password');
+    const error = document.getElementById('settings-password-error');
+    const submitBtn = document.getElementById('settings-password-submit');
+
+    setName.textContent = set.name;
+    input.value = '';
+    error.classList.add('hidden');
+    submitBtn.textContent = 'Enter';
+    row.classList.remove('hidden');
+    input.focus();
+}
+
+function hideSettingsPasswordRow() {
+    const row = document.getElementById('settings-password-row');
+    row.classList.add('hidden');
 }
 
 // Password modal functions
@@ -610,10 +634,16 @@ document.getElementById('settings-close').addEventListener('click', () => {
 
 document.getElementById('settings-image-set').addEventListener('change', async (e) => {
     cancelSettingsAutoClose();
-    await switchImageSet(e.target.value);
-    // If encrypted set triggered password modal, hide settings
-    // Otherwise close settings after selection
-    if (!currentImageSet.encrypted) {
+    const set = availableImageSets.find(s => s.id === e.target.value);
+    if (!set) return;
+
+    if (set.encrypted) {
+        // Show password input inline instead of separate modal
+        currentImageSet = set;
+        showSettingsPasswordRow(set);
+    } else {
+        hideSettingsPasswordRow();
+        await switchImageSet(e.target.value);
         hideSettingsModal();
     }
 });
@@ -631,6 +661,29 @@ document.getElementById('settings-modal').addEventListener('click', () => {
 // Reassemble checkbox
 document.getElementById('settings-reassemble').addEventListener('change', (e) => {
     CONFIG.reassembleOnClick = e.target.checked;
+});
+
+// Settings password submit
+document.getElementById('settings-password-submit').addEventListener('click', async () => {
+    const input = document.getElementById('settings-password');
+    const error = document.getElementById('settings-password-error');
+    const submitBtn = document.getElementById('settings-password-submit');
+    const password = input.value;
+
+    try {
+        await loadEncryptedImageSet(currentImageSet, password);
+        error.classList.add('hidden');
+        submitBtn.textContent = '\u2713';
+    } catch (e) {
+        error.classList.remove('hidden');
+    }
+});
+
+// Settings password enter key
+document.getElementById('settings-password').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        document.getElementById('settings-password-submit').click();
+    }
 });
 
 // Initialize image sets on startup

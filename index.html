@@ -59,6 +59,7 @@
             z-index: 20000;
         }
         .modal.hidden { display: none; }
+        .hidden { display: none !important; }
         .modal-content {
             background: rgba(30, 30, 50, 0.6);
             backdrop-filter: blur(12px);
@@ -183,6 +184,31 @@
             accent-color: #4CAF50;
             cursor: pointer;
         }
+        .password-input-row {
+            display: flex;
+            gap: 8px;
+        }
+        .password-input-row input {
+            flex: 1;
+            margin-bottom: 0;
+        }
+        .password-input-row button {
+            width: 60px;
+            padding: 10px 0;
+            border-radius: 4px;
+            border: none;
+            background: #4CAF50;
+            color: white;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .password-input-row button:hover {
+            background: #45a049;
+        }
+        #settings-password-row .error {
+            margin-top: 8px;
+            margin-bottom: 0;
+        }
     </style>
 </head>
 <body>
@@ -222,6 +248,14 @@
                     <input type="checkbox" id="settings-reassemble" checked>
                     Auto-reassemble on click
                 </label>
+            </div>
+            <div id="settings-password-row" class="settings-row hidden">
+                <label for="settings-password">Password for "<span id="settings-password-set-name"></span>"</label>
+                <div class="password-input-row">
+                    <input type="password" id="settings-password" placeholder="Enter password">
+                    <button id="settings-password-submit">Enter</button>
+                </div>
+                <p id="settings-password-error" class="error hidden">Incorrect password</p>
             </div>
             <div class="modal-buttons">
                 <button id="settings-close">Begin</button>
