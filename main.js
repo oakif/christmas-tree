@@ -1,28 +1,8 @@
 import * as THREE from 'three';
-import { GUI } from 'dat.gui';
 import { CONFIG } from './config.js';
-import {
-    deriveKeyFromPassword,
-    decryptText,
-    decryptImageToObjectURL,
-    base64ToArrayBuffer,
-} from './crypto.js';
 
-// Modular imports
+// Core modules
 import { state } from './js/state.js';
-import { initGeometries, getGeometryForType } from './js/particles/geometry.js';
-import { sampleTreePosition, generateExplosionTargets } from './js/particles/distribution.js';
-import {
-    getMaterialFromDefinition,
-    validateAndMergeObjectDef,
-} from './js/particles/materials.js';
-import {
-    createDefaultTestConfig,
-    createParticleUserData,
-    rebuildTreeParticles as rebuildTreeParticlesFn,
-    rebuildAllTestParticles as rebuildAllTestParticlesFn,
-    rebuildAllParticles as rebuildAllParticlesFn,
-} from './js/particles/particles.js';
 import {
     createScene,
     createPerspectiveCamera,
@@ -33,6 +13,61 @@ import {
 import { createEnvironmentMap } from './js/core/environment.js';
 import { createLighting } from './js/core/lighting.js';
 import { createPostProcessing } from './js/core/postprocessing.js';
+
+// Particle modules
+import { initGeometries, getGeometryForType } from './js/particles/geometry.js';
+import { sampleTreePosition, generateExplosionTargets } from './js/particles/distribution.js';
+import { getMaterialFromDefinition, validateAndMergeObjectDef } from './js/particles/materials.js';
+import {
+    rebuildTreeParticles as rebuildTreeParticlesFn,
+    rebuildAllTestParticles as rebuildAllTestParticlesFn,
+    rebuildAllParticles as rebuildAllParticlesFn,
+} from './js/particles/particles.js';
+
+// UI modules
+import { initFpsCounter, setFpsVisibility, updateFps } from './js/ui/fps.js';
+import {
+    initModals,
+    updateImageSets,
+    showSettingsModal,
+    showPasswordPrompt,
+} from './js/ui/modals.js';
+import { createGUI } from './js/ui/gui.js';
+
+// Showcase module
+import {
+    initShowcase,
+    loadImageSetsManifest,
+    switchImageSet,
+    loadEncryptedImageSet,
+    getShowcaseState,
+    setShowcaseBoxShouldShow,
+    getNextShowcaseImage,
+    updateShowcaseBoxTexture,
+    animateShowcaseBox,
+    renderShowcase,
+    getAvailableImageSets,
+    getCurrentImageSet,
+} from './js/showcase/showcase.js';
+
+// Interaction modules
+import {
+    initMouseTracking,
+    getMouse,
+    getLastMouseMoveTime,
+    updateParallaxTargets,
+    applyParallaxToGroup,
+} from './js/interaction/mouse.js';
+import { initEvents, initResizeHandler } from './js/interaction/events.js';
+
+// Animation module
+import {
+    initAnimation,
+    getAnimationState,
+    setAnimationState,
+    updateCameraReference,
+    startAnimationLoop,
+} from './js/animation/animation.js';
 
 // --- SETUP SCENE ---
 const container = document.getElementById('canvas-container');
@@ -58,623 +93,18 @@ state.envMap = envMap;
 function updateCamera(newState) {
     updateCameraOnStateChange(newState, CONFIG, state);
     camera = state.camera;
+    updateCameraReference(camera);
 }
-
-// --- SETUP 3D SHOWCASE IMAGE BOX ---
-let showcaseBox = null;
-let showcaseBoxTargetScale = 0;
-let showcaseBoxTargetOpacity = 0;
-let showcaseBoxShouldShow = false;
-const textureLoader = new THREE.TextureLoader();
-
-// Multi-image state
-let showcaseTextures = [];
-let showcaseCurrentIndex = 0;
-let showcaseLastShownIndex = -1;
-let showcaseImagesLoaded = false;
-
-// Image set state
-let availableImageSets = [];
-let currentImageSet = null;
-let decryptionKey = null;
-
-// Create rectangular vignette alpha map using canvas
-function createVignetteAlphaMap(edgeSoftness) {
-    const size = 512;
-    const canvas = document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext('2d');
-
-    // Create image data for pixel-by-pixel control
-    const imageData = ctx.createImageData(size, size);
-    const data = imageData.data;
-
-    for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
-            // Normalize coordinates to 0-1 range
-            const u = x / size;
-            const v = y / size;
-
-            // Distance from center (0 at center, 1 at edges)
-            const centerDistX = Math.abs(u - 0.5) * 2.0;
-            const centerDistY = Math.abs(v - 0.5) * 2.0;
-            const maxDist = Math.max(centerDistX, centerDistY);
-
-            // Apply smoothstep for vignette (handle edgeSoftness = 0)
-            let vignette;
-            if (edgeSoftness <= 0.001) {
-                // No vignette - fully opaque
-                vignette = 1.0;
-            } else {
-                const smoothstep = (edge0, edge1, x) => {
-                    const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
-                    return t * t * (3 - 2 * t);
-                };
-                vignette = smoothstep(1.0, 1.0 - edgeSoftness, maxDist);
-            }
-            const gray = Math.floor(vignette * 255);
-
-            // alphaMap uses grayscale value (not alpha channel)
-            // white = opaque, black = transparent
-            const index = (y * size + x) * 4;
-            data[index] = gray;      // R
-            data[index + 1] = gray;  // G
-            data[index + 2] = gray;  // B
-            data[index + 3] = 255;   // A (always opaque)
-        }
-    }
-
-    ctx.putImageData(imageData, 0, 0);
-
-    const vignetteTexture = new THREE.CanvasTexture(canvas);
-    return vignetteTexture;
-}
-
-// Initialize showcase box with a texture
-function initializeShowcaseBox(texture) {
-    const imgWidth = texture.image.width;
-    const imgHeight = texture.image.height;
-
-    // Calculate box dimensions based on max width/height constraints
-    const maxW = CONFIG.showcase.box.maxWidth;
-    const maxH = CONFIG.showcase.box.maxHeight;
-    const scaleW = maxW / imgWidth;
-    const scaleH = maxH / imgHeight;
-    const scale = Math.min(scaleW, scaleH);
-    const boxWidth = imgWidth * scale;
-    const boxHeight = imgHeight * scale;
-    const boxDepth = CONFIG.showcase.box.thickness;
-
-    // Create box geometry
-    const geometry = new THREE.BoxGeometry(boxWidth, boxHeight, boxDepth);
-
-    // Create materials array (6 faces: +x, -x, +y, -y, +z (front), -z (back))
-    const sideMaterial = new THREE.MeshStandardMaterial({
-        color: CONFIG.showcase.box.backColor,
-        transparent: true,
-        opacity: 0,
-    });
-
-    const vignetteAlphaMap = createVignetteAlphaMap(CONFIG.showcase.effects.edgeSoftness);
-
-    // Ensure texture uses correct color space
-    texture.colorSpace = THREE.SRGBColorSpace;
-
-    const frontMaterial = new THREE.MeshBasicMaterial({
-        map: texture,
-        alphaMap: vignetteAlphaMap,
-        transparent: true,
-        opacity: 0,
-        toneMapped: false,  // Exclude from tone mapping - show true colors
-    });
-    const backMaterial = new THREE.MeshStandardMaterial({
-        color: CONFIG.showcase.box.backColor,
-        transparent: true,
-        opacity: 0,
-    });
-
-    const materials = [
-        sideMaterial.clone(),  // +x (right)
-        sideMaterial.clone(),  // -x (left)
-        sideMaterial.clone(),  // +y (top)
-        sideMaterial.clone(),  // -y (bottom)
-        frontMaterial,         // +z (front - image)
-        backMaterial,          // -z (back)
-    ];
-
-    showcaseBox = new THREE.Mesh(geometry, materials);
-
-    // Position at scene center (camera pivot point)
-    showcaseBox.position.set(0, CONFIG.treeYOffset, 0);
-
-    // Start with scale 0 (invisible)
-    showcaseBox.scale.setScalar(0.001);
-
-    // Store current rotation for parallax smoothing
-    showcaseBox.userData = {
-        currentRotationX: 0,
-        currentRotationY: 0,
-    };
-
-    scene.add(showcaseBox);
-}
-
-// Get next showcase image based on display mode
-function getNextShowcaseImage() {
-    if (showcaseTextures.length === 0) return null;
-
-    let index;
-    if (CONFIG.showcase.displayMode === 'random') {
-        // Pick random index, avoiding the last shown image if possible
-        if (showcaseTextures.length === 1) {
-            index = 0;
-        } else {
-            do {
-                index = Math.floor(Math.random() * showcaseTextures.length);
-            } while (index === showcaseLastShownIndex);
-        }
-    } else {
-        // Sequential mode
-        index = showcaseCurrentIndex;
-        showcaseCurrentIndex = (showcaseCurrentIndex + 1) % showcaseTextures.length;
-    }
-
-    showcaseLastShownIndex = index;
-    return showcaseTextures[index];
-}
-
-// Update showcase box texture and resize
-function updateShowcaseBoxTexture(texture) {
-    if (!showcaseBox || !texture) return;
-
-    // Ensure texture uses correct color space
-    texture.colorSpace = THREE.SRGBColorSpace;
-
-    // Update the front face material (index 4 in materials array)
-    const frontMaterial = showcaseBox.material[4];
-    frontMaterial.map = texture;
-    frontMaterial.needsUpdate = true;
-
-    // Recalculate aspect ratio and resize box if needed
-    const imgWidth = texture.image.width;
-    const imgHeight = texture.image.height;
-
-    const maxW = CONFIG.showcase.box.maxWidth;
-    const maxH = CONFIG.showcase.box.maxHeight;
-    const scaleW = maxW / imgWidth;
-    const scaleH = maxH / imgHeight;
-    const scale = Math.min(scaleW, scaleH);
-    const boxWidth = imgWidth * scale;
-    const boxHeight = imgHeight * scale;
-
-    // Update geometry by replacing it
-    const boxDepth = CONFIG.showcase.box.thickness;
-    const newGeometry = new THREE.BoxGeometry(boxWidth, boxHeight, boxDepth);
-    showcaseBox.geometry.dispose();
-    showcaseBox.geometry = newGeometry;
-}
-
-// Load master manifest and initialize image sets
-async function loadImageSetsManifest() {
-    const manifestPath = CONFIG.showcase.imageFolder + 'manifest.json';
-
-    try {
-        const response = await fetch(manifestPath);
-        if (!response.ok) {
-            console.warn('No image sets manifest found');
-            return null;
-        }
-
-        const manifest = await response.json();
-        availableImageSets = manifest.sets || [];
-
-        if (availableImageSets.length === 0) {
-            console.warn('No image sets found in manifest');
-            return null;
-        }
-
-        return manifest;
-    } catch (error) {
-        console.warn('Could not load image sets manifest:', error.message);
-        return null;
-    }
-}
-
-// Switch to a different image set
-async function switchImageSet(setId) {
-    const set = availableImageSets.find(s => s.id === setId);
-    if (!set) {
-        console.warn(`Image set not found: ${setId}`);
-        return;
-    }
-
-    // Clear current state
-    currentImageSet = set;
-    decryptionKey = null;
-    showcaseTextures = [];
-    showcaseImagesLoaded = false;
-    showcaseCurrentIndex = 0;
-    showcaseLastShownIndex = -1;
-
-    if (set.encrypted) {
-        showPasswordPrompt(set);
-    } else {
-        await loadUnencryptedImageSet(set);
-    }
-}
-
-// Load unencrypted image set
-async function loadUnencryptedImageSet(set) {
-    const folder = CONFIG.showcase.imageFolder + set.path;
-    const manifestPath = folder + 'images.json';
-
-    try {
-        const response = await fetch(manifestPath);
-        if (!response.ok) {
-            console.warn(`Could not load images.json for set: ${set.id}`);
-            return;
-        }
-
-        const images = await response.json();
-        await loadImagesFromList(images, folder);
-    } catch (error) {
-        console.warn(`Error loading image set ${set.id}:`, error.message);
-    }
-}
-
-// Load encrypted image set with password
-async function loadEncryptedImageSet(set, password) {
-    const folder = CONFIG.showcase.imageFolder + set.path;
-    const manifestPath = folder + 'manifest.json';
-
-    const response = await fetch(manifestPath);
-    const manifest = await response.json();
-
-    // Derive key from password
-    const salt = new Uint8Array(base64ToArrayBuffer(manifest.salt));
-    decryptionKey = await deriveKeyFromPassword(password, salt);
-
-    // Decrypt images list
-    const imagesList = JSON.parse(
-        await decryptText(manifest.images, manifest.iv, decryptionKey)
-    );
-
-    // Load encrypted images
-    await loadEncryptedImages(imagesList, folder);
-}
-
-// Load images from a list of filenames
-async function loadImagesFromList(images, folder) {
-    if (!images || images.length === 0) {
-        console.warn('No images in list');
-        return;
-    }
-
-    console.log(`Loading ${images.length} images from ${folder}`);
-
-    const loadPromises = images.map((filename, index) => {
-        return new Promise((resolve) => {
-            textureLoader.load(
-                folder + filename,
-                (texture) => {
-                    texture.colorSpace = THREE.SRGBColorSpace;
-                    showcaseTextures[index] = texture;
-                    resolve(texture);
-                },
-                undefined,
-                () => {
-                    console.warn(`Failed to load: ${folder}${filename}`);
-                    resolve(null);
-                }
-            );
-        });
-    });
-
-    await Promise.all(loadPromises);
-    finalizeImageLoad();
-}
-
-// Load encrypted images
-async function loadEncryptedImages(imagesList, folder) {
-    console.log(`Loading ${imagesList.length} encrypted images from ${folder}`);
-
-    const loadPromises = imagesList.map(async (_, index) => {
-        try {
-            const response = await fetch(folder + index + '.enc');
-            const encryptedData = await response.arrayBuffer();
-            const objectURL = await decryptImageToObjectURL(encryptedData, decryptionKey);
-
-            return new Promise((resolve) => {
-                textureLoader.load(
-                    objectURL,
-                    (texture) => {
-                        texture.colorSpace = THREE.SRGBColorSpace;
-                        showcaseTextures[index] = texture;
-                        URL.revokeObjectURL(objectURL);
-                        resolve(texture);
-                    },
-                    undefined,
-                    () => {
-                        URL.revokeObjectURL(objectURL);
-                        resolve(null);
-                    }
-                );
-            });
-        } catch (error) {
-            console.warn(`Failed to decrypt image ${index}:`, error.message);
-            return null;
-        }
-    });
-
-    await Promise.all(loadPromises);
-    finalizeImageLoad();
-}
-
-// Finalize image loading
-function finalizeImageLoad() {
-    showcaseTextures = showcaseTextures.filter(t => t !== null);
-
-    if (showcaseTextures.length > 0) {
-        showcaseImagesLoaded = true;
-        console.log(`Successfully loaded ${showcaseTextures.length} images`);
-        initializeShowcaseBox(showcaseTextures[0]);
-    }
-}
-
-// Settings modal state
-let settingsAutoCloseTimer = null;
-let settingsCountdown = 10;
-
-function showSettingsModal(withCountdown = false) {
-    const modal = document.getElementById('settings-modal');
-    const select = document.getElementById('settings-image-set');
-
-    // Populate dropdown from availableImageSets
-    select.innerHTML = '';
-    availableImageSets.forEach(set => {
-        const option = document.createElement('option');
-        option.value = set.id;
-        option.textContent = set.name;
-        if (currentImageSet && currentImageSet.id === set.id) {
-            option.selected = true;
-        }
-        select.appendChild(option);
-    });
-
-    // Sync reassemble checkbox with current config
-    document.getElementById('settings-reassemble').checked = CONFIG.reassembleOnClick;
-
-    // Hide password row when opening modal
-    hideSettingsPasswordRow();
-
-    const closeBtn = document.getElementById('settings-close');
-
-    // Only start auto-close countdown on initial page load
-    if (withCountdown) {
-        settingsCountdown = CONFIG.settingsAutoCloseSeconds || 5;
-        closeBtn.textContent = `Begin (${settingsCountdown}s)`;
-
-        settingsAutoCloseTimer = setInterval(() => {
-            settingsCountdown--;
-            if (settingsCountdown <= 0) {
-                hideSettingsModal();
-            } else {
-                closeBtn.textContent = `Begin (${settingsCountdown}s)`;
-            }
-        }, 1000);
-    } else {
-        closeBtn.textContent = 'Save';
-    }
-
-    // Set CSS variable for fade duration
-    const fadeDuration = CONFIG.modalFadeDuration || 300;
-    modal.style.setProperty('--modal-fade-duration', `${fadeDuration}ms`);
-
-    // Show modal with fade-in
-    modal.classList.add('fade-in');
-    modal.classList.remove('hidden', 'fade-out');
-    // Force reflow then remove fade-in to trigger transition
-    modal.offsetHeight;
-    modal.classList.remove('fade-in');
-}
-
-function hideSettingsModal() {
-    const modal = document.getElementById('settings-modal');
-    const fadeDuration = CONFIG.modalFadeDuration || 300;
-
-    if (settingsAutoCloseTimer) {
-        clearInterval(settingsAutoCloseTimer);
-        settingsAutoCloseTimer = null;
-    }
-
-    // Fade out then hide
-    modal.classList.add('fade-out');
-    setTimeout(() => {
-        modal.classList.add('hidden');
-        modal.classList.remove('fade-out');
-    }, fadeDuration);
-}
-
-function cancelSettingsAutoClose() {
-    if (settingsAutoCloseTimer) {
-        clearInterval(settingsAutoCloseTimer);
-        settingsAutoCloseTimer = null;
-        // Update button text when countdown is cancelled
-        document.getElementById('settings-close').textContent = 'Save';
-    }
-}
-
-// Settings password row functions
-function showSettingsPasswordRow(set) {
-    const row = document.getElementById('settings-password-row');
-    const setName = document.getElementById('settings-password-set-name');
-    const input = document.getElementById('settings-password');
-    const error = document.getElementById('settings-password-error');
-    const submitBtn = document.getElementById('settings-password-submit');
-
-    setName.textContent = set.name;
-    input.value = '';
-    error.classList.add('hidden');
-    submitBtn.textContent = 'Enter';
-    row.classList.remove('hidden');
-    input.focus();
-}
-
-function hideSettingsPasswordRow() {
-    const row = document.getElementById('settings-password-row');
-    row.classList.add('hidden');
-}
-
-// Password modal functions
-function showPasswordPrompt(set) {
-    const modal = document.getElementById('password-modal');
-    const setNameEl = document.getElementById('password-set-name');
-    const input = document.getElementById('password-input');
-    const error = document.getElementById('password-error');
-
-    setNameEl.textContent = `Enter password for "${set.name}"`;
-    input.value = '';
-    error.classList.add('hidden');
-    modal.classList.remove('hidden');
-    input.focus();
-}
-
-function hidePasswordPrompt() {
-    const modal = document.getElementById('password-modal');
-    modal.classList.add('hidden');
-}
-
-// Password modal event listeners
-document.getElementById('password-submit').addEventListener('click', async () => {
-    const input = document.getElementById('password-input');
-    const error = document.getElementById('password-error');
-    const password = input.value;
-
-    try {
-        await loadEncryptedImageSet(currentImageSet, password);
-        hidePasswordPrompt();
-    } catch (e) {
-        error.classList.remove('hidden');
-        console.warn('Decryption failed:', e);
-    }
-});
-
-document.getElementById('password-cancel').addEventListener('click', () => {
-    hidePasswordPrompt();
-});
-
-document.getElementById('password-input').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-        document.getElementById('password-submit').click();
-    }
-});
-
-// Settings modal event listeners
-document.getElementById('settings-icon').addEventListener('mousedown', (e) => {
-    e.stopPropagation();
-});
-
-document.getElementById('settings-icon').addEventListener('click', (e) => {
-    e.stopPropagation();
-    showSettingsModal();
-});
-
-document.getElementById('settings-close').addEventListener('click', () => {
-    hideSettingsModal();
-});
-
-document.getElementById('settings-image-set').addEventListener('change', async (e) => {
-    cancelSettingsAutoClose();
-    const set = availableImageSets.find(s => s.id === e.target.value);
-    if (!set) return;
-
-    if (set.encrypted) {
-        // Show password input inline instead of separate modal
-        currentImageSet = set;
-        showSettingsPasswordRow(set);
-    } else {
-        hideSettingsPasswordRow();
-        await switchImageSet(e.target.value);
-        hideSettingsModal();
-    }
-});
-
-// Prevent clicks on settings modal from triggering tree explosion
-document.getElementById('settings-modal').addEventListener('mousedown', (e) => {
-    e.stopPropagation();
-});
-
-// Cancel auto-close on any interaction with settings modal content
-// Click on overlay (outside modal-content) dismisses the modal
-document.getElementById('settings-modal').addEventListener('click', (e) => {
-    if (e.target.id === 'settings-modal') {
-        // Clicked on overlay, dismiss modal
-        hideSettingsModal();
-    } else {
-        // Clicked inside modal content, cancel auto-close
-        cancelSettingsAutoClose();
-    }
-});
-
-// Reassemble checkbox
-document.getElementById('settings-reassemble').addEventListener('change', (e) => {
-    CONFIG.reassembleOnClick = e.target.checked;
-});
-
-// Settings password submit
-document.getElementById('settings-password-submit').addEventListener('click', async () => {
-    const input = document.getElementById('settings-password');
-    const error = document.getElementById('settings-password-error');
-    const submitBtn = document.getElementById('settings-password-submit');
-    const password = input.value;
-
-    try {
-        await loadEncryptedImageSet(currentImageSet, password);
-        error.classList.add('hidden');
-        submitBtn.textContent = '\u2713';
-    } catch (e) {
-        error.classList.remove('hidden');
-    }
-});
-
-// Settings password enter key
-document.getElementById('settings-password').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-        document.getElementById('settings-password-submit').click();
-    }
-});
-
-// Initialize image sets on startup
-loadImageSetsManifest().then(manifest => {
-    if (manifest && manifest.defaultSet) {
-        switchImageSet(manifest.defaultSet);
-    }
-    // Show settings modal on page load (with auto-close countdown)
-    if (availableImageSets.length > 0) {
-        showSettingsModal(true);
-    }
-});
-
-// --- POST PROCESSING ---
-const { composer, renderPass, bloomPass } = createPostProcessing(renderer, scene, camera, CONFIG);
-state.composer = composer;
-state.renderPass = renderPass;
-state.bloomPass = bloomPass;
 
 // --- GEOMETRY INITIALIZATION ---
-// Geometries are now loaded from js/particles/geometry.js
 initGeometries();
-
-// --- MATERIALS & PARTICLES ---
-// Material and particle functions are now imported from js/particles/materials.js and js/particles/particles.js
 
 // --- CREATE PARTICLES ---
 const particles = [];
 const treeGroup = new THREE.Group();
 scene.add(treeGroup);
 
-// Pre-generate explosion targets - calculate total count first
+// Pre-generate explosion targets
 const totalParticleCount = CONFIG.objects.reduce((sum, obj) => sum + obj.count, 0);
 const explosionCenter = CONFIG.explosionCenterMode === 'camera'
     ? new THREE.Vector3(camera.position.x, camera.position.y, camera.position.z)
@@ -693,7 +123,6 @@ CONFIG.objects.forEach(objectDef => {
         const mesh = new THREE.Mesh(geometry, material);
         mesh.scale.setScalar(fullDef.scale);
 
-        // Use density-corrected position
         const pos = sampleTreePosition(CONFIG);
 
         mesh.userData = {
@@ -721,20 +150,17 @@ CONFIG.objects.forEach(objectDef => {
 const lights = createLighting(scene, CONFIG);
 state.lights = lights;
 
-// Aliases for GUI compatibility
-const ambientLight = lights.ambient;
-const hemiLight = lights.hemi;
-const keyLight = lights.key;
-const fillLight = lights.fill;
-const rimLight = lights.rim;
-const overheadLight = lights.overhead;
-const topGlow = lights.topGlow;
+// --- POST PROCESSING ---
+const { composer, renderPass, bloomPass } = createPostProcessing(renderer, scene, camera, CONFIG);
+state.composer = composer;
+state.renderPass = renderPass;
+state.bloomPass = bloomPass;
 
 // --- TEST PARTICLES ---
 const testParticles = [];
 const testObjectGroups = [];
 
-// Wrapper functions that call the imported particle functions with local context
+// Wrapper functions for particle rebuilding
 function rebuildTreeParticles() {
     rebuildTreeParticlesFn(particles, treeGroup, testObjectGroups, camera, CONFIG, envMap, guiControls);
 }
@@ -747,1125 +173,143 @@ function rebuildAllParticles() {
     rebuildAllParticlesFn(particles, testParticles, testObjectGroups, treeGroup, camera, CONFIG, envMap, guiControls);
 }
 
-// --- DAT.GUI FOR ALL CONFIG SETTINGS ---
-const gui = new GUI();
-document.body.appendChild(gui.domElement);
-gui.domElement.style.position = 'absolute';
-gui.domElement.style.top = '10px';
-gui.domElement.style.right = '10px';
-gui.domElement.style.zIndex = '10000';
+// --- INITIALIZE UI ---
+initFpsCounter();
+setFpsVisibility(CONFIG.showFPS);
 
-// Show/hide GUI based on config setting
-if (!CONFIG.showGUI) {
-    gui.domElement.style.display = 'none';
-}
+// --- INITIALIZE SHOWCASE ---
+initShowcase(scene, CONFIG);
 
-// Helper to convert hex number to hex string for dat.GUI
-function hexToString(hex) {
-    return '#' + hex.toString(16).padStart(6, '0');
-}
-
-// Helper to convert hex string to number
-function stringToHex(str) {
-    return parseInt(str.replace('#', ''), 16);
-}
-
-// GUI controls object - uses hex strings for colors
-const guiControls = {
-    // === Scene Setup - Tree Geometry ===
-    treeHeight: CONFIG.treeHeight,
-    treeRadius: CONFIG.treeRadius,
-    treeYOffset: CONFIG.treeYOffset,
-
-    // === Scene Setup - Camera & View ===
-    cameraX: CONFIG.cameraX,
-    cameraY: CONFIG.cameraY,
-    cameraZ: CONFIG.cameraZ,
-    viewType: CONFIG.viewType,
-    explodedViewType: CONFIG.explodedViewType,
-    isometricZoom: CONFIG.isometricZoom,
-    isometricAngle: CONFIG.isometricAngle,
-
-    // === Interaction ===
-    reassembleOnClick: CONFIG.reassembleOnClick,
-    resetMouseOnLeave: CONFIG.resetMouseOnLeave,
-
-    // === Animation & Effects - Idle Animation ===
-    idleFloatSpeed: CONFIG.idleFloatSpeed,
-    idleFloatAmount: CONFIG.idleFloatAmount,
-
-    // === Animation & Effects - Explosion Animation ===
-    animationSpeed: CONFIG.animationSpeed,
-    holdDuration: CONFIG.holdDuration,
-
-    // === Animation & Effects - Parallax Settings - Idle Parallax ===
-    parallaxEnabled: CONFIG.parallaxEnabled,
-    parallaxStrengthX: CONFIG.parallaxStrengthX,
-    parallaxStrengthY: CONFIG.parallaxStrengthY,
-    parallaxSmoothing: CONFIG.parallaxSmoothing,
-    parallaxPositionStrengthX: CONFIG.parallaxPositionStrengthX,
-    parallaxPositionStrengthY: CONFIG.parallaxPositionStrengthY,
-
-    // === Animation & Effects - Parallax Settings - Exploded Parallax ===
-    explodedParallaxEnabled: CONFIG.explodedParallaxEnabled,
-    explodedParallaxStrengthX: CONFIG.explodedParallaxStrengthX,
-    explodedParallaxStrengthY: CONFIG.explodedParallaxStrengthY,
-    explodedParallaxStrength: CONFIG.explodedParallaxStrength,
-
-    // === Animation & Effects - Explosion Distribution ===
-    explosionInnerRadius: CONFIG.explosionInnerRadius,
-    explosionOuterRadius: CONFIG.explosionOuterRadius,
-    explosionCenterMode: CONFIG.explosionCenterMode,
-    explosionOffsetX: CONFIG.explosionOffsetX,
-    explosionOffsetY: CONFIG.explosionOffsetY,
-    explosionOffsetZ: CONFIG.explosionOffsetZ,
-
-    // === Rendering & Visuals - Post Processing ===
-    bloomStrength: CONFIG.bloomStrength,
-    bloomRadius: CONFIG.bloomRadius,
-    bloomThreshold: CONFIG.bloomThreshold,
-    toneMappingExposure: CONFIG.toneMappingExposure,
-
-    // === Rendering & Visuals - Environment ===
-    envTopColor: hexToString(CONFIG.environmentMap.topColor),
-    envBottomColor: hexToString(CONFIG.environmentMap.bottomColor),
-
-    // === Rendering & Visuals - Lighting - Ambient ===
-    ambientColor: hexToString(CONFIG.lighting.ambient.color),
-    ambientIntensity: CONFIG.lighting.ambient.intensity,
-
-    // === Rendering & Visuals - Lighting - Hemisphere ===
-    hemiSkyColor: hexToString(CONFIG.lighting.hemisphere.skyColor),
-    hemiGroundColor: hexToString(CONFIG.lighting.hemisphere.groundColor),
-    hemiIntensity: CONFIG.lighting.hemisphere.intensity,
-
-    // === Rendering & Visuals - Lighting - Key Light ===
-    keyLightColor: hexToString(CONFIG.lighting.keyLight.color),
-    keyLightIntensity: CONFIG.lighting.keyLight.intensity,
-
-    // === Rendering & Visuals - Lighting - Fill Light ===
-    fillLightColor: hexToString(CONFIG.lighting.fillLight.color),
-    fillLightIntensity: CONFIG.lighting.fillLight.intensity,
-
-    // === Rendering & Visuals - Lighting - Rim Light ===
-    rimLightColor: hexToString(CONFIG.lighting.rimLight.color),
-    rimLightIntensity: CONFIG.lighting.rimLight.intensity,
-
-    // === Rendering & Visuals - Lighting - Overhead Light ===
-    overheadLightColor: hexToString(CONFIG.lighting.overheadLight.color),
-    overheadLightIntensity: CONFIG.lighting.overheadLight.intensity,
-
-    // === Rendering & Visuals - Lighting - Top Glow ===
-    topGlowColor: hexToString(CONFIG.lighting.topGlow.color),
-    topGlowIntensity: CONFIG.lighting.topGlow.intensity,
-    topGlowRange: CONFIG.lighting.topGlow.range,
-
-    // === UI & Performance - Visibility ===
-    showTreeParticles: CONFIG.showTreeParticles,
-    showFPS: CONFIG.showFPS,
-
-    // === UI & Performance - Performance ===
-    performanceMode: CONFIG.performanceMode,
-    uncapFPS: CONFIG.uncapFPS,
-
-    // === Showcase ===
-    imageDelay: CONFIG.imageDelay,
-    displayMode: CONFIG.showcase.displayMode,
-};
-
-// ========================================
-// 1. SCENE SETUP
-// ========================================
-const sceneSetupFolder = gui.addFolder('Scene Setup');
-
-// Tree Geometry
-const treeGeometryFolder = sceneSetupFolder.addFolder('Tree Geometry');
-treeGeometryFolder.add(guiControls, 'treeHeight', 10, 100).name('Height').onChange(val => {
-    CONFIG.treeHeight = val;
-    // Tree geometry changes require full particle regeneration
-    rebuildAllParticles();
-});
-treeGeometryFolder.add(guiControls, 'treeRadius', 5, 30).name('Radius').onChange(val => {
-    CONFIG.treeRadius = val;
-    rebuildAllParticles();
-});
-treeGeometryFolder.add(guiControls, 'treeYOffset', -20, 20).name('Y Offset').onChange(val => {
-    CONFIG.treeYOffset = val;
-    // Y offset can be updated directly without regeneration
-});
-
-// Camera & View
-const cameraFolder = sceneSetupFolder.addFolder('Camera & View');
-cameraFolder.add(guiControls, 'cameraX', -50, 50).name('Camera X').onChange(val => {
-    perspectiveCamera.position.x = val;
-    CONFIG.cameraX = val;
-});
-cameraFolder.add(guiControls, 'cameraY', -50, 50).name('Camera Y').onChange(val => {
-    perspectiveCamera.position.y = val;
-    CONFIG.cameraY = val;
-});
-cameraFolder.add(guiControls, 'cameraZ', -50, 50).name('Camera Z').onChange(val => {
-    perspectiveCamera.position.z = val;
-    CONFIG.cameraZ = val;
-});
-cameraFolder.add(guiControls, 'viewType', ['perspective', 'isometric']).name('View Type').onChange(val => {
-    CONFIG.viewType = val;
-    if (state !== 'EXPLODING') {
-        camera = val === 'isometric' ? orthographicCamera : perspectiveCamera;
-        renderPass.camera = camera;
+// Async wrapper for switchImageSet that handles password prompts
+async function handleSwitchImageSet(setId) {
+    const result = await switchImageSet(setId);
+    if (result && result.needsPassword) {
+        showPasswordPrompt(result.set);
     }
-});
-cameraFolder.add(guiControls, 'explodedViewType', ['perspective', 'isometric']).name('Exploded View').onChange(val => {
-    CONFIG.explodedViewType = val;
-    if (state === 'EXPLODING') {
-        camera = val === 'isometric' ? orthographicCamera : perspectiveCamera;
-        renderPass.camera = camera;
-    }
-});
-cameraFolder.add(guiControls, 'isometricZoom', 20, 150).name('Iso Zoom').onChange(val => {
-    CONFIG.isometricZoom = val;
-    const aspect = window.innerWidth / window.innerHeight;
-    orthographicCamera.left = val * aspect / -2;
-    orthographicCamera.right = val * aspect / 2;
-    orthographicCamera.top = val / 2;
-    orthographicCamera.bottom = val / -2;
-    orthographicCamera.updateProjectionMatrix();
-});
-cameraFolder.add(guiControls, 'isometricAngle', 0, 90).name('Iso Angle').onChange(val => {
-    CONFIG.isometricAngle = val;
-    const angleRad = val * Math.PI / 180;
-    const perspectiveDistance = Math.sqrt(
-        CONFIG.cameraX ** 2 + CONFIG.cameraY ** 2 + CONFIG.cameraZ ** 2
-    );
-    orthographicCamera.position.set(
-        CONFIG.cameraX,
-        perspectiveDistance * Math.sin(angleRad),
-        perspectiveDistance * Math.cos(angleRad)
-    );
-    orthographicCamera.lookAt(0, 0, 0);
-});
-
-// ========================================
-// 2. INTERACTION
-// ========================================
-const interactionFolder = gui.addFolder('Interaction');
-interactionFolder.add(guiControls, 'reassembleOnClick').name('Reassemble on Click').onChange(val => {
-    CONFIG.reassembleOnClick = val;
-});
-interactionFolder.add(guiControls, 'resetMouseOnLeave').name('Reset Mouse on Leave').onChange(val => {
-    CONFIG.resetMouseOnLeave = val;
-});
-
-// ========================================
-// 3. ANIMATION & EFFECTS
-// ========================================
-const animationFolder = gui.addFolder('Animation & Effects');
-
-// Idle Animation
-const idleAnimFolder = animationFolder.addFolder('Idle Animation');
-idleAnimFolder.add(guiControls, 'idleFloatSpeed', 0, 0.01, 0.0001).name('Float Speed').onChange(val => {
-    CONFIG.idleFloatSpeed = val;
-});
-idleAnimFolder.add(guiControls, 'idleFloatAmount', 0, 1, 0.01).name('Float Amount').onChange(val => {
-    CONFIG.idleFloatAmount = val;
-});
-
-// Explosion Animation
-const explosionAnimFolder = animationFolder.addFolder('Explosion Animation');
-explosionAnimFolder.add(guiControls, 'animationSpeed', 0.01, 0.5, 0.01).name('Speed').onChange(val => {
-    CONFIG.animationSpeed = val;
-});
-explosionAnimFolder.add(guiControls, 'holdDuration', 1000, 60000, 1000).name('Hold Duration (ms)').onChange(val => {
-    CONFIG.holdDuration = val;
-});
-
-// Parallax Settings
-const parallaxSettingsFolder = animationFolder.addFolder('Parallax Settings');
-
-// Idle Parallax (sub-subfolder)
-const idleParallaxFolder = parallaxSettingsFolder.addFolder('Idle Parallax');
-idleParallaxFolder.add(guiControls, 'parallaxEnabled').name('Enabled').onChange(val => {
-    CONFIG.parallaxEnabled = val;
-});
-idleParallaxFolder.add(guiControls, 'parallaxStrengthX', 0, 10, 0.1).name('Strength X').onChange(val => {
-    CONFIG.parallaxStrengthX = val;
-});
-idleParallaxFolder.add(guiControls, 'parallaxStrengthY', 0, 10, 0.1).name('Strength Y').onChange(val => {
-    CONFIG.parallaxStrengthY = val;
-});
-idleParallaxFolder.add(guiControls, 'parallaxSmoothing', 0.01, 0.2, 0.01).name('Smoothing').onChange(val => {
-    CONFIG.parallaxSmoothing = val;
-});
-idleParallaxFolder.add(guiControls, 'parallaxPositionStrengthX', -5, 5, 0.1).name('Position X').onChange(val => {
-    CONFIG.parallaxPositionStrengthX = val;
-});
-idleParallaxFolder.add(guiControls, 'parallaxPositionStrengthY', -5, 5, 0.1).name('Position Y').onChange(val => {
-    CONFIG.parallaxPositionStrengthY = val;
-});
-
-// Exploded Parallax (sub-subfolder)
-const explodedParallaxFolder = parallaxSettingsFolder.addFolder('Exploded Parallax');
-explodedParallaxFolder.add(guiControls, 'explodedParallaxEnabled').name('Enabled').onChange(val => {
-    CONFIG.explodedParallaxEnabled = val;
-});
-explodedParallaxFolder.add(guiControls, 'explodedParallaxStrengthX', 0, 10, 0.1).name('Strength X').onChange(val => {
-    CONFIG.explodedParallaxStrengthX = val;
-});
-explodedParallaxFolder.add(guiControls, 'explodedParallaxStrengthY', 0, 10, 0.1).name('Strength Y').onChange(val => {
-    CONFIG.explodedParallaxStrengthY = val;
-});
-explodedParallaxFolder.add(guiControls, 'explodedParallaxStrength', 0, 20, 0.5).name('Individual Strength').onChange(val => {
-    CONFIG.explodedParallaxStrength = val;
-});
-
-// Explosion Distribution
-const explosionDistFolder = animationFolder.addFolder('Explosion Distribution');
-explosionDistFolder.add(guiControls, 'explosionInnerRadius', 0, 100).name('Inner Radius').onChange(val => {
-    CONFIG.explosionInnerRadius = val;
-});
-explosionDistFolder.add(guiControls, 'explosionOuterRadius', 0, 150).name('Outer Radius').onChange(val => {
-    CONFIG.explosionOuterRadius = val;
-});
-explosionDistFolder.add(guiControls, 'explosionCenterMode', ['camera', 'tree']).name('Center Mode').onChange(val => {
-    CONFIG.explosionCenterMode = val;
-});
-explosionDistFolder.add(guiControls, 'explosionOffsetX', -50, 50).name('Offset X').onChange(val => {
-    CONFIG.explosionOffsetX = val;
-});
-explosionDistFolder.add(guiControls, 'explosionOffsetY', -50, 50).name('Offset Y').onChange(val => {
-    CONFIG.explosionOffsetY = val;
-});
-explosionDistFolder.add(guiControls, 'explosionOffsetZ', -50, 50).name('Offset Z').onChange(val => {
-    CONFIG.explosionOffsetZ = val;
-});
-
-// ========================================
-// 4. RENDERING & VISUALS
-// ========================================
-const renderingFolder = gui.addFolder('Rendering & Visuals');
-
-// Exposure (tone mapping)
-renderingFolder.add(guiControls, 'toneMappingExposure', 0, 10, 0.1).name('Exposure').onChange(val => {
-    renderer.toneMappingExposure = val;
-    CONFIG.toneMappingExposure = val;
-});
-
-// Post Processing
-const postProcessingFolder = renderingFolder.addFolder('Post Processing');
-
-// Bloom controls
-postProcessingFolder.add(guiControls, 'bloomStrength', 0, 3, 0.01).name('Bloom Strength').onChange(val => {
-    bloomPass.strength = val;
-    CONFIG.bloomStrength = val;
-});
-postProcessingFolder.add(guiControls, 'bloomRadius', 0, 2, 0.01).name('Bloom Radius').onChange(val => {
-    bloomPass.radius = val;
-    CONFIG.bloomRadius = val;
-});
-postProcessingFolder.add(guiControls, 'bloomThreshold', 0, 1, 0.01).name('Bloom Threshold').onChange(val => {
-    bloomPass.threshold = val;
-    CONFIG.bloomThreshold = val;
-});
-
-// Environment
-const envFolder = renderingFolder.addFolder('Environment');
-envFolder.addColor(guiControls, 'envTopColor').name('Sky Top').onChange(val => {
-    CONFIG.environmentMap.topColor = stringToHex(val);
-    envMap = createEnvironmentMap(renderer, CONFIG);
-    scene.environment = envMap;
-    state.envMap = envMap;
-});
-envFolder.addColor(guiControls, 'envBottomColor').name('Sky Bottom').onChange(val => {
-    CONFIG.environmentMap.bottomColor = stringToHex(val);
-    envMap = createEnvironmentMap(renderer, CONFIG);
-    scene.environment = envMap;
-    state.envMap = envMap;
-});
-
-// Lighting
-const lightingFolder = renderingFolder.addFolder('Lighting');
-
-// Ambient
-lightingFolder.addColor(guiControls, 'ambientColor').name('Ambient Color').onChange(val => {
-    ambientLight.color.setHex(stringToHex(val));
-    CONFIG.lighting.ambient.color = stringToHex(val);
-});
-lightingFolder.add(guiControls, 'ambientIntensity', 0, 5, 0.1).name('Ambient Intensity').onChange(val => {
-    ambientLight.intensity = val;
-    CONFIG.lighting.ambient.intensity = val;
-});
-
-// Hemisphere
-lightingFolder.addColor(guiControls, 'hemiSkyColor').name('Hemi Sky Color').onChange(val => {
-    hemiLight.color.setHex(stringToHex(val));
-    CONFIG.lighting.hemisphere.skyColor = stringToHex(val);
-});
-lightingFolder.addColor(guiControls, 'hemiGroundColor').name('Hemi Ground Color').onChange(val => {
-    hemiLight.groundColor.setHex(stringToHex(val));
-    CONFIG.lighting.hemisphere.groundColor = stringToHex(val);
-});
-lightingFolder.add(guiControls, 'hemiIntensity', 0, 5, 0.1).name('Hemi Intensity').onChange(val => {
-    hemiLight.intensity = val;
-    CONFIG.lighting.hemisphere.intensity = val;
-});
-
-// Key Light
-lightingFolder.addColor(guiControls, 'keyLightColor').name('Key Light Color').onChange(val => {
-    keyLight.color.setHex(stringToHex(val));
-    CONFIG.lighting.keyLight.color = stringToHex(val);
-});
-lightingFolder.add(guiControls, 'keyLightIntensity', 0, 5, 0.1).name('Key Light Intensity').onChange(val => {
-    keyLight.intensity = val;
-    CONFIG.lighting.keyLight.intensity = val;
-});
-
-// Fill Light
-lightingFolder.addColor(guiControls, 'fillLightColor').name('Fill Light Color').onChange(val => {
-    fillLight.color.setHex(stringToHex(val));
-    CONFIG.lighting.fillLight.color = stringToHex(val);
-});
-lightingFolder.add(guiControls, 'fillLightIntensity', 0, 5, 0.1).name('Fill Light Intensity').onChange(val => {
-    fillLight.intensity = val;
-    CONFIG.lighting.fillLight.intensity = val;
-});
-
-// Rim Light
-lightingFolder.addColor(guiControls, 'rimLightColor').name('Rim Light Color').onChange(val => {
-    rimLight.color.setHex(stringToHex(val));
-    CONFIG.lighting.rimLight.color = stringToHex(val);
-});
-lightingFolder.add(guiControls, 'rimLightIntensity', 0, 5, 0.1).name('Rim Light Intensity').onChange(val => {
-    rimLight.intensity = val;
-    CONFIG.lighting.rimLight.intensity = val;
-});
-
-// Overhead Light
-lightingFolder.addColor(guiControls, 'overheadLightColor').name('Overhead Color').onChange(val => {
-    overheadLight.color.setHex(stringToHex(val));
-    CONFIG.lighting.overheadLight.color = stringToHex(val);
-});
-lightingFolder.add(guiControls, 'overheadLightIntensity', 0, 5, 0.1).name('Overhead Intensity').onChange(val => {
-    overheadLight.intensity = val;
-    CONFIG.lighting.overheadLight.intensity = val;
-});
-
-// Top Glow
-lightingFolder.addColor(guiControls, 'topGlowColor').name('Top Glow Color').onChange(val => {
-    topGlow.color.setHex(stringToHex(val));
-    CONFIG.lighting.topGlow.color = stringToHex(val);
-});
-lightingFolder.add(guiControls, 'topGlowIntensity', 0, 10, 0.1).name('Top Glow Intensity').onChange(val => {
-    topGlow.intensity = val;
-    CONFIG.lighting.topGlow.intensity = val;
-});
-lightingFolder.add(guiControls, 'topGlowRange', 0, 100, 1).name('Top Glow Range').onChange(val => {
-    topGlow.distance = val;
-    CONFIG.lighting.topGlow.range = val;
-});
-
-// ========================================
-// 5. UI & PERFORMANCE
-// ========================================
-const uiPerfFolder = gui.addFolder('UI & Performance');
-
-// Visibility
-const visibilityFolder = uiPerfFolder.addFolder('Visibility');
-
-// Set initial tree particles visibility based on config
-const initialHasTestObjects = testObjectGroups.reduce((sum, g) => sum + g.count, 0) > 0;
-particles.forEach(p => {
-    p.visible = CONFIG.showTreeParticles && !initialHasTestObjects;
-});
-
-visibilityFolder.add(guiControls, 'showTreeParticles')
-    .name('Show Tree Particles')
-    .onChange(val => {
-        CONFIG.showTreeParticles = val;
-        // Only show tree particles if enabled AND no test objects are active
-        const hasTestObjects = testObjectGroups.reduce((sum, g) => sum + g.count, 0) > 0;
-        particles.forEach(p => {
-            p.visible = val && !hasTestObjects;
-        });
-    });
-
-const fpsCounter = document.getElementById('fps-counter');
-const fpsText = document.getElementById('fps-text');
-const fpsCanvas = document.getElementById('fps-graph');
-const fpsCtx = fpsCanvas.getContext('2d');
-
-// Set canvas size
-fpsCanvas.width = 200;
-fpsCanvas.height = 60;
-
-// Set initial FPS counter visibility based on config
-if (CONFIG.showFPS) {
-    fpsCounter.classList.add('visible');
 }
 
-visibilityFolder.add(guiControls, 'showFPS')
-    .name('Show FPS')
-    .onChange(val => {
-        CONFIG.showFPS = val;
-        if (val) {
-            fpsCounter.classList.add('visible');
-        } else {
-            fpsCounter.classList.remove('visible');
-        }
-    });
-
-// Performance
-const performanceFolder = uiPerfFolder.addFolder('Performance');
-performanceFolder.add(guiControls, 'performanceMode').name('Performance Mode').onChange(val => {
-    CONFIG.performanceMode = val;
+// --- INITIALIZE MODALS ---
+initModals(CONFIG, getAvailableImageSets(), {
+    switchImageSet: handleSwitchImageSet,
+    loadEncryptedImageSet: loadEncryptedImageSet,
+    getCurrentImageSet: getCurrentImageSet,
 });
-performanceFolder.add(guiControls, 'uncapFPS')
-    .name('Uncap FPS')
-    .onChange(val => {
-        CONFIG.uncapFPS = val;
-    });
 
-visibilityFolder.open();
-
-// ========================================
-// 6. SHOWCASE
-// ========================================
-const showcaseFolder = gui.addFolder('Showcase');
-
-// Image set dropdown - populated after manifest loads
-guiControls.imageSet = '';
-let imageSetController = null;
-
+// Initialize image sets on startup
 loadImageSetsManifest().then(manifest => {
-    if (!manifest || !manifest.sets || manifest.sets.length === 0) return;
+    if (manifest) {
+        updateImageSets(manifest.sets || [], getCurrentImageSet());
+        if (manifest.defaultSet) {
+            handleSwitchImageSet(manifest.defaultSet);
+        }
+        // Show settings modal on page load (with auto-close countdown)
+        if (getAvailableImageSets().length > 0) {
+            showSettingsModal(true);
+        }
+    }
+});
 
-    // Build options object: { "Display Name": "set_id" }
-    const setOptions = {};
-    manifest.sets.forEach(set => {
-        setOptions[set.name] = set.id;
-    });
+// --- INITIALIZE MOUSE TRACKING ---
+initMouseTracking(CONFIG);
 
-    guiControls.imageSet = manifest.defaultSet || manifest.sets[0].id;
-
-    imageSetController = showcaseFolder.add(guiControls, 'imageSet', setOptions)
-        .name('Image Set')
-        .onChange(async (setId) => {
-            await switchImageSet(setId);
+// --- INITIALIZE EVENTS ---
+initEvents(CONFIG, {
+    onExplosion: () => {
+        // Reset individual parallax shifts
+        particles.forEach(p => {
+            p.userData.individualParallaxShift.set(0, 0, 0);
         });
-});
 
-showcaseFolder.add(guiControls, 'imageDelay', 0, 5000, 100).name('Delay (ms)').onChange(val => {
-    CONFIG.showcase.delay = val;
-});
-showcaseFolder.add(guiControls, 'displayMode', ['sequential', 'random']).name('Display Mode').onChange(val => {
-    CONFIG.showcase.displayMode = val;
-});
+        // Cycle to next showcase image and show box after delay
+        const showcaseState = getShowcaseState();
+        if (showcaseState.showcaseImagesLoaded && showcaseState.showcaseTextures.length > 0) {
+            const nextTexture = getNextShowcaseImage();
+            updateShowcaseBoxTexture(nextTexture);
 
-// === TEST OBJECTS (DEBUG) ===
-const testObjectsFolder = gui.addFolder('Test Objects (Debug)');
-
-// Debounced rebuild function for all test objects
-let rebuildTimeout = null;
-function debouncedRebuildAll() {
-    if (rebuildTimeout) {
-        clearTimeout(rebuildTimeout);
-    }
-    rebuildTimeout = setTimeout(() => {
-        rebuildAllTestParticles();
-    }, 500);
-}
-
-// Add new object group button
-guiControls.addObjectGroup = function() {
-    const newGroup = createDefaultTestConfig();
-    testObjectGroups.push(newGroup);
-    createGroupGUI(newGroup, testObjectGroups.length - 1);
-    testObjectsFolder.open();
-};
-testObjectsFolder.add(guiControls, 'addObjectGroup').name('➕ Add Object Group');
-
-// Create GUI for an object group
-function createGroupGUI(group, index) {
-    const groupFolder = testObjectsFolder.addFolder(`Group ${index + 1}`);
-
-    // Count
-    groupFolder.add(group, 'count', 0, 5000, 1)
-        .name('Count')
-        .onChange(debouncedRebuildAll);
-
-    // Shape and material
-    groupFolder.add(group, 'shape', ['star', 'heart', 'snowflake', 'present', 'sphere'])
-        .name('Shape')
-        .onChange(debouncedRebuildAll);
-
-    // Physical properties folder (created before materialType so we can reference it)
-    const physicalFolder = groupFolder.addFolder('Physical Properties');
-    const transmissionCtrl = physicalFolder.add(group, 'transmission', 0, 1, 0.01)
-        .name('Transmission')
-        .onChange(debouncedRebuildAll);
-    const thicknessCtrl = physicalFolder.add(group, 'thickness', 0, 50, 0.5)
-        .name('Thickness')
-        .onChange(debouncedRebuildAll);
-    const roughnessCtrl = physicalFolder.add(group, 'roughness', 0, 1, 0.01)
-        .name('Roughness')
-        .onChange(debouncedRebuildAll);
-    const metalnessCtrl = physicalFolder.add(group, 'metalness', 0, 1, 0.01)
-        .name('Metalness')
-        .onChange(debouncedRebuildAll);
-    const clearcoatCtrl = physicalFolder.add(group, 'clearcoat', 0, 1, 0.01)
-        .name('Clearcoat')
-        .onChange(debouncedRebuildAll);
-    const clearcoatRoughnessCtrl = physicalFolder.add(group, 'clearcoatRoughness', 0, 1, 0.01)
-        .name('Clearcoat Roughness')
-        .onChange(debouncedRebuildAll);
-    const iorCtrl = physicalFolder.add(group, 'ior', 1.0, 2.5, 0.01)
-        .name('IOR')
-        .onChange(debouncedRebuildAll);
-    const envMapIntensityCtrl = physicalFolder.add(group, 'envMapIntensity', 0, 5, 0.1)
-        .name('Env Map Intensity')
-        .onChange(debouncedRebuildAll);
-
-    groupFolder.add(group, 'materialType', ['matte', 'satin', 'metallic', 'glass', 'frostedGlass'])
-        .name('Material Type')
-        .onChange(val => {
-            // Reset material properties to new preset defaults
-            const preset = CONFIG.materialPresets[val] || {};
-            group.transmission = preset.transmission ?? CONFIG.materialDefaults.transmission;
-            group.thickness = preset.thickness ?? CONFIG.materialDefaults.thickness;
-            group.roughness = preset.roughness ?? CONFIG.materialDefaults.roughness;
-            group.metalness = preset.metalness ?? CONFIG.materialDefaults.metalness;
-            group.clearcoat = preset.clearcoat ?? CONFIG.materialDefaults.clearcoat;
-            group.clearcoatRoughness = preset.clearcoatRoughness ?? CONFIG.materialDefaults.clearcoatRoughness;
-            group.ior = preset.ior ?? CONFIG.materialDefaults.ior;
-            group.envMapIntensity = preset.envMapIntensity ?? CONFIG.materialDefaults.envMapIntensity;
-
-            // Update GUI controllers to reflect new values
-            transmissionCtrl.updateDisplay();
-            thicknessCtrl.updateDisplay();
-            roughnessCtrl.updateDisplay();
-            metalnessCtrl.updateDisplay();
-            clearcoatCtrl.updateDisplay();
-            clearcoatRoughnessCtrl.updateDisplay();
-            iorCtrl.updateDisplay();
-            envMapIntensityCtrl.updateDisplay();
-
-            debouncedRebuildAll();
-        });
-    groupFolder.add(group, 'scale', 0.1, 10, 0.1)
-        .name('Scale')
-        .onChange(debouncedRebuildAll);
-
-    // Colors
-    groupFolder.addColor(group, 'color')
-        .name('Base Color')
-        .onChange(debouncedRebuildAll);
-
-    // Advanced settings (collapsed by default)
-    const advancedFolder = groupFolder.addFolder('Advanced');
-    advancedFolder.addColor(group, 'emissive')
-        .name('Emissive Color')
-        .onChange(debouncedRebuildAll);
-    advancedFolder.add(group, 'emissiveIntensity', 0, 2, 0.01)
-        .name('Emissive Intensity')
-        .onChange(debouncedRebuildAll);
-
-    // Remove button
-    group.removeGroup = function() {
-        const idx = testObjectGroups.indexOf(group);
-        if (idx !== -1) {
-            testObjectGroups.splice(idx, 1);
-            gui.removeFolder(groupFolder);
-            debouncedRebuildAll();
-        }
-    };
-    groupFolder.add(group, 'removeGroup').name('🗑️ Remove Group');
-
-    groupFolder.open();
-}
-
-testObjectsFolder.open();
-
-// --- MOUSE PARALLAX ---
-const mouse = new THREE.Vector2(0, 0);
-const prevMouse = new THREE.Vector2(0, 0);
-const mouseVelocity = new THREE.Vector2(0, 0);
-const targetRotation = new THREE.Vector2(0, 0);
-const targetPosition = new THREE.Vector2(0, 0);
-let lastMouseMoveTime = 0;
-
-function updateMousePosition(event) {
-    prevMouse.copy(mouse);
-    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-    mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-    mouseVelocity.x = mouse.x - prevMouse.x;
-    mouseVelocity.y = mouse.y - prevMouse.y;
-    lastMouseMoveTime = performance.now();
-}
-
-function resetMousePosition() {
-    if (CONFIG.resetMouseOnLeave) {
-        mouse.x = 0;
-        mouse.y = 0;
-    }
-}
-
-// Reset mouse tracking on visibility changes
-function onVisibilityChange() {
-    if (document.hidden) {
-        resetMousePosition();
-    }
-}
-
-// Track mouse using multiple event types for reliability
-// Using document-level listeners to work even without focus
-document.addEventListener('mousemove', updateMousePosition, { passive: true });
-document.addEventListener('pointermove', updateMousePosition, { passive: true });
-
-// Reset when mouse leaves the document/window
-document.addEventListener('mouseleave', resetMousePosition);
-document.addEventListener('mouseout', (event) => {
-    // Only reset if actually leaving the document (not just moving between elements)
-    if (event.relatedTarget === null || event.relatedTarget.nodeName === 'HTML') {
-        resetMousePosition();
-    }
-});
-window.addEventListener('pointerleave', resetMousePosition);
-
-// Handle visibility changes
-document.addEventListener('visibilitychange', onVisibilityChange);
-
-// When mouse enters, immediately start tracking
-document.addEventListener('mouseenter', (event) => {
-    updateMousePosition(event);
-});
-
-// Backup listeners to ensure mouse position updates after clicks
-document.addEventListener('mouseup', updateMousePosition, { passive: true });
-document.addEventListener('click', updateMousePosition, { passive: true });
-document.addEventListener('mousedown', updateMousePosition, { passive: true });
-
-// Edge-specific fix: release pointer capture which can block mousemove events
-window.addEventListener('pointerdown', (event) => {
-    // Update position on pointer down
-    updateMousePosition(event);
-    // Release any implicit pointer capture that Edge might set
-    if (event.target.releasePointerCapture) {
-        try {
-            event.target.releasePointerCapture(event.pointerId);
-        } catch (e) {
-            // Ignore - pointer might not be captured
-        }
-    }
-}, { passive: true });
-
-// --- ANIMATION LOOP ---
-let state = "IDLE";
-
-// FPS tracking
-let lastTime = performance.now();
-let frameCount = 0;
-let fps = 0;
-const fpsHistory = [];
-const maxFpsHistory = 100;
-
-function animate() {
-    if (CONFIG.uncapFPS) {
-        setTimeout(animate, 0);
-    } else {
-        requestAnimationFrame(animate);
-    }
-
-    const time = Date.now();
-
-    // Calculate FPS
-    frameCount++;
-    const currentTime = performance.now();
-    const elapsed = currentTime - lastTime;
-
-    if (elapsed >= 1000) {
-        fps = Math.round((frameCount * 1000) / elapsed);
-        fpsText.textContent = `FPS: ${fps}`;
-
-        // Update FPS history
-        fpsHistory.push(fps);
-        if (fpsHistory.length > maxFpsHistory) {
-            fpsHistory.shift();
-        }
-
-        // Draw FPS graph
-        if (guiControls.showFPS) {
-            const maxFps = Math.max(60, Math.max(...fpsHistory, 120));
-            const graphWidth = fpsCanvas.width;
-            const graphHeight = fpsCanvas.height;
-
-            // Clear canvas
-            fpsCtx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-            fpsCtx.fillRect(0, 0, graphWidth, graphHeight);
-
-            // Draw grid lines
-            fpsCtx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
-            fpsCtx.lineWidth = 1;
-
-            // 60 FPS line
-            const y60 = graphHeight - (60 / maxFps) * graphHeight;
-            fpsCtx.beginPath();
-            fpsCtx.moveTo(0, y60);
-            fpsCtx.lineTo(graphWidth, y60);
-            fpsCtx.stroke();
-
-            // Draw FPS line
-            fpsCtx.strokeStyle = fps < 60 ? '#ff6666' : '#66ff66';
-            fpsCtx.lineWidth = 2;
-            fpsCtx.beginPath();
-
-            for (let i = 0; i < fpsHistory.length; i++) {
-                const x = (i / (maxFpsHistory - 1)) * graphWidth;
-                const y = graphHeight - (fpsHistory[i] / maxFps) * graphHeight;
-
-                if (i === 0) {
-                    fpsCtx.moveTo(x, y);
-                } else {
-                    fpsCtx.lineTo(x, y);
+            setTimeout(() => {
+                if (getAnimationState() === "EXPLODING") {
+                    setShowcaseBoxShouldShow(true);
                 }
-            }
-
-            fpsCtx.stroke();
-
-            // Draw labels
-            fpsCtx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-            fpsCtx.font = '10px monospace';
-            fpsCtx.fillText(`${maxFps}`, 2, 10);
-            fpsCtx.fillText('0', 2, graphHeight - 2);
-            fpsCtx.fillText('60', 2, y60 - 2);
+            }, CONFIG.imageDelay);
         }
 
-        frameCount = 0;
-        lastTime = currentTime;
-    }
-
-    // Parallax rotation and position of the tree group
-    // Use different strengths for exploded vs idle/returning states
-    const isExploding = state === "EXPLODING";
-    const parallaxActive = isExploding ? CONFIG.explodedParallaxEnabled : CONFIG.parallaxEnabled;
-
-    if (parallaxActive) {
-        const parallaxX = isExploding ? CONFIG.explodedParallaxStrengthX : CONFIG.parallaxStrengthX;
-        const parallaxY = isExploding ? CONFIG.explodedParallaxStrengthY : CONFIG.parallaxStrengthY;
-        targetRotation.x = mouse.y * parallaxX;
-        targetRotation.y = mouse.x * parallaxY;
-        targetPosition.x = mouse.x * CONFIG.parallaxPositionStrengthX;
-        targetPosition.y = mouse.y * CONFIG.parallaxPositionStrengthY;
-    } else {
-        targetRotation.x = 0;
-        targetRotation.y = 0;
-        targetPosition.x = 0;
-        targetPosition.y = 0;
-    }
-
-    treeGroup.rotation.x += (targetRotation.x - treeGroup.rotation.x) * CONFIG.parallaxSmoothing;
-    treeGroup.rotation.y += (targetRotation.y - treeGroup.rotation.y) * CONFIG.parallaxSmoothing;
-    treeGroup.position.x += (targetPosition.x - treeGroup.position.x) * CONFIG.parallaxSmoothing;
-    treeGroup.position.y += (targetPosition.y + CONFIG.treeYOffset - treeGroup.position.y) * CONFIG.parallaxSmoothing;
-
-    // --- SHOWCASE BOX ANIMATION ---
-    if (showcaseBox) {
-        // Only visible when flag is set (after delay in EXPLODING state)
-        if (showcaseBoxShouldShow) {
-            showcaseBoxTargetScale = 1;
-            showcaseBoxTargetOpacity = 1;
-        } else {
-            showcaseBoxTargetScale = 0;
-            showcaseBoxTargetOpacity = 0;
-        }
-
-        // Animate scale (smooth interpolation) - tied to explosion speed
-        const currentScale = showcaseBox.scale.x;
-        const newScale = currentScale + (showcaseBoxTargetScale - currentScale) * CONFIG.animation.explosion.speed;
-        showcaseBox.scale.setScalar(Math.max(0.001, newScale)); // Avoid zero scale
-
-        // Animate opacity for all materials
-        showcaseBox.material.forEach(mat => {
-            mat.opacity += (showcaseBoxTargetOpacity - mat.opacity) * CONFIG.showcase.animation.fadeSpeed;
-        });
-
-        // --- PARALLAX ROTATION (billboard with delayed offset) ---
-        const parallaxStrength = CONFIG.showcase.parallax.rotationStrength;
-        const returnSpeed = CONFIG.showcase.parallax.smoothing;
-
-        // Initialize parallax target if not exists
-        if (showcaseBox.userData.parallaxTargetX === undefined) {
-            showcaseBox.userData.parallaxTargetX = 0;
-            showcaseBox.userData.parallaxTargetY = 0;
-        }
-
-        // Mouse position sets the target rotation
-        const mouseTargetX = mouse.y * parallaxStrength;
-        const mouseTargetY = -mouse.x * parallaxStrength;
-
-        // Initialize smoothed mouse influence if not exists
-        if (showcaseBox.userData.mouseInfluence === undefined) {
-            showcaseBox.userData.mouseInfluence = 0;
-        }
-
-        // Determine if mouse is currently moving
-        const timeSinceMove = performance.now() - lastMouseMoveTime;
-        const isMouseMoving = timeSinceMove < 100;
-
-        // Smoothly transition mouseInfluence (no jerks)
-        const targetInfluence = isMouseMoving ? 1 : 0;
-        const influenceSpeed = isMouseMoving ? 0.15 : 0.03; // Fast ramp up, slow fade out
-        showcaseBox.userData.mouseInfluence += (targetInfluence - showcaseBox.userData.mouseInfluence) * influenceSpeed;
-
-        // Blend between center (0,0) and mouse position based on smoothed influence
-        showcaseBox.userData.parallaxTargetX = mouseTargetX * showcaseBox.userData.mouseInfluence;
-        showcaseBox.userData.parallaxTargetY = mouseTargetY * showcaseBox.userData.mouseInfluence;
-
-        // Smoothly interpolate current rotation toward target
-        showcaseBox.userData.currentRotationX += (showcaseBox.userData.parallaxTargetX - showcaseBox.userData.currentRotationX) * returnSpeed;
-        showcaseBox.userData.currentRotationY += (showcaseBox.userData.parallaxTargetY - showcaseBox.userData.currentRotationY) * returnSpeed;
-
-        // Make box face camera (billboard), then apply parallax offset
-        showcaseBox.lookAt(camera.position);
-
-        // Add the parallax rotation offset
-        showcaseBox.rotation.x += showcaseBox.userData.currentRotationX;
-        showcaseBox.rotation.y += showcaseBox.userData.currentRotationY;
-
-        // Keep position fixed at center
-        showcaseBox.position.set(0, CONFIG.treeYOffset, 0);
-    }
-
-    // Particle Logic - applies to both tree particles and test particles
-    let allReturned = true;
-
-    // Animate tree particles
-    particles.forEach((p, index) => {
-        // Constant gentle rotation for all states
-        p.rotation.x += p.userData.rotSpeed.x;
-        p.rotation.y += p.userData.rotSpeed.y;
-        p.rotation.z += p.userData.rotSpeed.z;
-
-        if (state === "IDLE") {
-            // Gentle floating motion
-            const floatOffset = Math.sin(time * CONFIG.idleFloatSpeed + index * 0.1) * CONFIG.idleFloatAmount;
-            p.position.y = p.userData.originalPos.y + floatOffset;
-            p.position.x = p.userData.originalPos.x;
-            p.position.z = p.userData.originalPos.z;
-        }
-        else if (state === "EXPLODING") {
-            // Calculate parallax offset based on mouse position (if enabled)
-            if (CONFIG.explodedParallaxEnabled) {
-                const parallaxX = mouse.x * CONFIG.explodedParallaxStrength * p.userData.baseParallaxSensitivity;
-                const parallaxY = mouse.y * CONFIG.explodedParallaxStrength * p.userData.baseParallaxSensitivity;
-                p.userData.individualParallaxShift.x += (parallaxX - p.userData.individualParallaxShift.x) * 0.08;
-                p.userData.individualParallaxShift.y += (parallaxY - p.userData.individualParallaxShift.y) * 0.08;
-            } else {
-                p.userData.individualParallaxShift.x *= 0.95;
-                p.userData.individualParallaxShift.y *= 0.95;
-            }
-
-            // Calculate target position with parallax applied
-            const targetX = p.userData.explosionTarget.x + p.userData.individualParallaxShift.x;
-            const targetY = p.userData.explosionTarget.y + p.userData.individualParallaxShift.y;
-            const targetZ = p.userData.explosionTarget.z;
-
-            // Lerp toward parallax-adjusted target
-            p.position.x += (targetX - p.position.x) * CONFIG.animationSpeed;
-            p.position.y += (targetY - p.position.y) * CONFIG.animationSpeed;
-            p.position.z += (targetZ - p.position.z) * CONFIG.animationSpeed;
-
-            // Add subtle floating motion on top
-            const floatOffset = Math.sin(time * CONFIG.idleFloatSpeed * 2 + index * 0.1) * CONFIG.idleFloatAmount;
-            p.position.x += Math.sin(time * 0.001 + index) * 0.01;
-            p.position.y += floatOffset;
-            p.position.z += Math.cos(time * 0.001 + index) * 0.01;
-
-            // Faster rotation when exploding
-            p.rotation.x += 0.02;
-            p.rotation.y += 0.01;
-        }
-        else if (state === "RETURNING") {
-            // Return to original tree position using same animation speed
-            p.position.lerp(p.userData.originalPos, CONFIG.animationSpeed);
-
-            // Fade out parallax shift
-            p.userData.individualParallaxShift.multiplyScalar(0.95);
-
-            // Check if this particle has returned close enough to its original position
-            const dist = p.position.distanceTo(p.userData.originalPos);
-            if (dist > 0.1) {
-                allReturned = false;
-            }
-        }
-    });
-
-    // Animate test particles (same logic as tree particles)
-    testParticles.forEach((p, index) => {
-        // Constant gentle rotation for all states
-        p.rotation.x += p.userData.rotSpeed.x;
-        p.rotation.y += p.userData.rotSpeed.y;
-        p.rotation.z += p.userData.rotSpeed.z;
-
-        if (state === "IDLE") {
-            // Gentle floating motion
-            const floatOffset = Math.sin(time * CONFIG.idleFloatSpeed + index * 0.1) * CONFIG.idleFloatAmount;
-            p.position.y = p.userData.originalPos.y + floatOffset;
-            p.position.x = p.userData.originalPos.x;
-            p.position.z = p.userData.originalPos.z;
-        }
-        else if (state === "EXPLODING") {
-            // Calculate parallax offset based on mouse position (if enabled)
-            if (CONFIG.explodedParallaxEnabled) {
-                const parallaxX = mouse.x * CONFIG.explodedParallaxStrength * p.userData.baseParallaxSensitivity;
-                const parallaxY = mouse.y * CONFIG.explodedParallaxStrength * p.userData.baseParallaxSensitivity;
-                p.userData.individualParallaxShift.x += (parallaxX - p.userData.individualParallaxShift.x) * 0.08;
-                p.userData.individualParallaxShift.y += (parallaxY - p.userData.individualParallaxShift.y) * 0.08;
-            } else {
-                p.userData.individualParallaxShift.x *= 0.95;
-                p.userData.individualParallaxShift.y *= 0.95;
-            }
-
-            // Calculate target position with parallax applied
-            const targetX = p.userData.explosionTarget.x + p.userData.individualParallaxShift.x;
-            const targetY = p.userData.explosionTarget.y + p.userData.individualParallaxShift.y;
-            const targetZ = p.userData.explosionTarget.z;
-
-            // Lerp toward parallax-adjusted target
-            p.position.x += (targetX - p.position.x) * CONFIG.animationSpeed;
-            p.position.y += (targetY - p.position.y) * CONFIG.animationSpeed;
-            p.position.z += (targetZ - p.position.z) * CONFIG.animationSpeed;
-
-            // Add subtle floating motion on top
-            const floatOffset = Math.sin(time * CONFIG.idleFloatSpeed * 2 + index * 0.1) * CONFIG.idleFloatAmount;
-            p.position.x += Math.sin(time * 0.001 + index) * 0.01;
-            p.position.y += floatOffset;
-            p.position.z += Math.cos(time * 0.001 + index) * 0.01;
-
-            // Faster rotation when exploding
-            p.rotation.x += 0.02;
-            p.rotation.y += 0.01;
-        }
-        else if (state === "RETURNING") {
-            // Return to original tree position using same animation speed
-            p.position.lerp(p.userData.originalPos, CONFIG.animationSpeed);
-
-            // Fade out parallax shift
-            p.userData.individualParallaxShift.multiplyScalar(0.95);
-
-            // Check if this particle has returned close enough to its original position
-            const dist = p.position.distanceTo(p.userData.originalPos);
-            if (dist > 0.1) {
-                allReturned = false;
-            }
-        }
-    });
-
-    // Transition to IDLE when all particles have returned
-    if (state === "RETURNING" && allReturned) {
-        state = "IDLE";
-        updateCamera(state);
-    }
-
-    // When showcase is visible, skip bloom for correct depth and colors
-    if (showcaseBox && showcaseBoxShouldShow) {
-        showcaseBox.visible = true;
-        renderer.render(scene, camera);
-    } else {
-        if (showcaseBox) showcaseBox.visible = false;
-        composer.render();
-    }
-}
-animate();
-
-// --- INTERACTION ---
-let returnTimer = null;
-
-function triggerExplosion(event) {
-    // Ignore clicks on dat.GUI elements
-    const target = event.target;
-    if (target.closest('.dg')) {
-        return; // Click was on GUI, ignore it
-    }
-
-    // Only prevent default on touch events to avoid scroll/zoom
-    // Don't prevent on mouse events as it breaks mousemove tracking
-    if (event.type === 'touchstart') {
-        event.preventDefault();
-    }
-
-    // If already exploding and reassembleOnClick is enabled, start returning immediately
-    if (state === "EXPLODING" && CONFIG.reassembleOnClick) {
-        // Clear any pending timers
-        if (returnTimer) {
-            clearTimeout(returnTimer);
-            returnTimer = null;
-        }
-
-        // Reset showcase box visibility flag
-        showcaseBoxShouldShow = false;
-
-        state = "RETURNING";
-        updateCamera(state);
-        // Don't set a timer here - we'll transition to IDLE based on position convergence
-        return;
-    }
-
-    // Allow exploding from IDLE or RETURNING state (can re-explode while returning)
-    if (state !== "IDLE" && state !== "RETURNING") return;
-
-    // Clear any pending timers from previous explosion
-    if (returnTimer) {
-        clearTimeout(returnTimer);
-        returnTimer = null;
-    }
-
-    state = "EXPLODING";
-    updateCamera(state);
-
-    // Reset individual parallax shifts
-    particles.forEach(p => {
-        p.userData.individualParallaxShift.set(0, 0, 0);
-    });
-
-    // Cycle to next showcase image and show box after delay
-    if (showcaseImagesLoaded && showcaseTextures.length > 0) {
-        // Get next image for this explosion
-        const nextTexture = getNextShowcaseImage();
-        updateShowcaseBoxTexture(nextTexture);
-
-        setTimeout(() => {
-            if (state === "EXPLODING") {
-                showcaseBoxShouldShow = true;
-            }
-        }, CONFIG.imageDelay);
-    }
-
-    returnTimer = setTimeout(() => {
-        showcaseBoxShouldShow = false;
-        state = "RETURNING";
-        updateCamera(state);
-        // IDLE transition now happens automatically based on particle convergence
-        returnTimer = null;
-    }, CONFIG.holdDuration);
-}
-
-window.addEventListener('mousedown', triggerExplosion);
-window.addEventListener('touchstart', triggerExplosion, { passive: false });
-
-window.addEventListener('resize', () => {
-    const newAspect = window.innerWidth / window.innerHeight;
-
-    // Update perspective camera
-    perspectiveCamera.aspect = newAspect;
-    perspectiveCamera.updateProjectionMatrix();
-
-    // Update orthographic camera
-    const frustumSize = CONFIG.isometricZoom;
-    orthographicCamera.left = frustumSize * newAspect / -2;
-    orthographicCamera.right = frustumSize * newAspect / 2;
-    orthographicCamera.top = frustumSize / 2;
-    orthographicCamera.bottom = frustumSize / -2;
-    orthographicCamera.updateProjectionMatrix();
-
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    composer.setSize(window.innerWidth, window.innerHeight);
+        updateCamera("EXPLODING");
+    },
+    onReturn: () => {
+        setShowcaseBoxShouldShow(false);
+        updateCamera("RETURNING");
+    },
+    getAnimationState: getAnimationState,
+    setAnimationState: (newState) => {
+        setAnimationState(newState);
+        updateCamera(newState);
+    },
 });
+
+initResizeHandler({
+    perspectiveCamera,
+    orthographicCamera,
+    renderer,
+    composer,
+});
+
+// --- CREATE GUI ---
+// Forward declaration for guiControls (used by rebuild functions)
+let guiControls = {};
+
+const guiResult = createGUI(CONFIG, {
+    perspectiveCamera,
+    orthographicCamera,
+    renderer,
+    scene,
+    renderPass,
+    bloomPass,
+    ambientLight: lights.ambient,
+    hemiLight: lights.hemi,
+    keyLight: lights.key,
+    fillLight: lights.fill,
+    rimLight: lights.rim,
+    overheadLight: lights.overhead,
+    topGlow: lights.topGlow,
+    particles,
+    testParticles,
+    testObjectGroups,
+    state: {
+        get animationState() { return getAnimationState(); },
+        get camera() { return camera; },
+        set camera(c) { camera = c; state.camera = c; },
+        get envMap() { return envMap; },
+        set envMap(e) { envMap = e; state.envMap = e; },
+    },
+}, {
+    rebuildAllParticles,
+    rebuildAllTestParticles,
+    switchImageSet: handleSwitchImageSet,
+    loadImageSetsManifest,
+    setFpsVisibility,
+});
+
+guiControls = guiResult.guiControls;
+
+// --- INITIALIZE ANIMATION ---
+initAnimation(CONFIG, {
+    particles,
+    testParticles,
+    treeGroup,
+    camera,
+    renderer,
+    composer,
+    scene,
+}, {
+    updateFps,
+    updateParallaxTargets,
+    applyParallaxToGroup,
+    animateShowcaseBox,
+    renderShowcase,
+    getMouse,
+    getLastMouseMoveTime,
+    updateCamera,
+});
+
+// --- START ANIMATION LOOP ---
+startAnimationLoop();
