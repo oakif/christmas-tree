@@ -117,17 +117,17 @@ function handleTouchMove(event) {
     const deltaY = ((touch.clientY - lastTouchPos.y) / window.innerHeight) * 2;
 
     // Axis separation: filter non-dominant axis to prevent cross-contamination
+    // If one axis is 2x larger than the other, suppress the smaller one
     const absX = Math.abs(deltaX);
     const absY = Math.abs(deltaY);
-    const threshold = CONFIG.touchAxisSeparationThreshold || 2.0;
 
     let filteredX = deltaX;
     let filteredY = deltaY;
 
-    if (absX > absY * threshold) {
+    if (absX > absY * 2) {
         // Primarily horizontal drag - suppress vertical
         filteredY = 0;
-    } else if (absY > absX * threshold) {
+    } else if (absY > absX * 2) {
         // Primarily vertical drag - suppress horizontal
         filteredX = 0;
     } else {
@@ -288,7 +288,7 @@ export function updateParallaxTargets(animationState) {
         // Y axis: Hooke's law spring - force proportional to displacement
         // F = -k * x, where k is spring constant and x is displacement
         // This creates proper spring dynamics with natural oscillation
-        const springK = CONFIG.touchTiltReturnSpeed || 0.08;  // Spring constant
+        const springK = CONFIG.touchVerticalTiltSpringStrength || 0.08;
         const damping = 0.85;  // Damping factor to prevent endless oscillation
 
         // Apply spring force to velocity (F = ma, assuming m=1, so a = F)
