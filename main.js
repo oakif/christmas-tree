@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GUI } from 'dat.gui';
 import { CONFIG } from './config.js';
 import {
@@ -11,6 +10,11 @@ import {
     decryptImageToObjectURL,
     base64ToArrayBuffer,
 } from './crypto.js';
+
+// Modular imports
+import { state } from './js/state.js';
+import { initGeometries, getGeometryForType } from './js/particles/geometry.js';
+import { sampleTreePosition, generateExplosionTargets } from './js/particles/distribution.js';
 
 // --- SETUP SCENE ---
 const container = document.getElementById('canvas-container');
@@ -737,218 +741,9 @@ const composer = new EffectComposer(renderer);
 composer.addPass(renderScene);
 composer.addPass(bloomPass);
 
-// --- GEOMETRY GENERATORS ---
-
-// Gift box with ribbon and bow
-function createGiftBoxGeometry() {
-    // Constants
-    const boxSize = 0.5;
-    const ribbonWidth = 0.08;
-    const ribbonHeight = 0.02;
-    const ribbonOverhang = 0.02;
-    const ribbonOffset = ribbonHeight / 2;
-    const loopRadius = 0.12;
-    const tubeRadius = 0.025;
-    const loopDistance = 0.08;
-    const loopHeight = boxSize / 2 + ribbonHeight + 0.02;
-
-    // Main box
-    const boxGeom = new THREE.BoxGeometry(boxSize, boxSize, boxSize);
-
-    // Helper: Create ribbon
-    function createRibbon(width, height, depth, tx, ty, tz) {
-        const ribbon = new THREE.BoxGeometry(width, height, depth);
-        ribbon.translate(tx, ty, tz);
-        return ribbon;
-    }
-
-    // Helper: Create bow loop (diagonal outward and upward at 45°)
-    function createBowLoop(angleY) {
-        const loop = new THREE.TorusGeometry(loopRadius, tubeRadius, 8, 12, Math.PI);
-        loop.rotateZ(Math.PI / 2);      // Stand up
-        loop.rotateX(-Math.PI / 4);     // Tilt outward 45°
-        loop.rotateY(angleY);           // Point in diagonal direction
-        const offsetX = Math.cos(angleY) * loopDistance;
-        const offsetZ = Math.sin(angleY) * loopDistance;
-        loop.translate(offsetX, loopHeight, offsetZ);
-        return loop;
-    }
-
-    // Create 8 ribbons total
-    const ribbons = [
-        // Top face - 2 ribbons in cross pattern
-        createRibbon(
-            boxSize + ribbonOverhang, ribbonHeight, ribbonWidth,
-            0, boxSize / 2 + ribbonOffset, 0
-        ),
-        createRibbon(
-            ribbonWidth, ribbonHeight, boxSize + ribbonOverhang,
-            0, boxSize / 2 + ribbonOffset, 0
-        ),
-
-        // Bottom face - 2 ribbons in cross pattern
-        createRibbon(
-            boxSize + ribbonOverhang, ribbonHeight, ribbonWidth,
-            0, -(boxSize / 2 + ribbonOffset), 0
-        ),
-        createRibbon(
-            ribbonWidth, ribbonHeight, boxSize + ribbonOverhang,
-            0, -(boxSize / 2 + ribbonOffset), 0
-        ),
-
-        // Front face - 1 vertical ribbon
-        createRibbon(
-            ribbonWidth, boxSize + ribbonOverhang, ribbonHeight,
-            0, 0, boxSize / 2 + ribbonOffset
-        ),
-
-        // Back face - 1 vertical ribbon
-        createRibbon(
-            ribbonWidth, boxSize + ribbonOverhang, ribbonHeight,
-            0, 0, -(boxSize / 2 + ribbonOffset)
-        ),
-
-        // Right face - 1 vertical ribbon
-        createRibbon(
-            ribbonHeight, boxSize + ribbonOverhang, ribbonWidth,
-            boxSize / 2 + ribbonOffset, 0, 0
-        ),
-
-        // Left face - 1 vertical ribbon
-        createRibbon(
-            ribbonHeight, boxSize + ribbonOverhang, ribbonWidth,
-            -(boxSize / 2 + ribbonOffset), 0, 0
-        ),
-    ];
-
-    // Create 4 bow loops pointing diagonally outward and upward
-    const bowLoops = [
-        createBowLoop(Math.PI / 4),         // 45° NE
-        createBowLoop(3 * Math.PI / 4),     // 135° NW
-        createBowLoop(5 * Math.PI / 4),     // 225° SW
-        createBowLoop(7 * Math.PI / 4),     // 315° SE
-    ];
-
-    // Center knot
-    const knot = new THREE.SphereGeometry(0.04, 8, 8);
-    knot.translate(0, boxSize / 2 + ribbonHeight + 0.02, 0);
-
-    // Merge all geometries
-    return mergeGeometries([boxGeom, ...ribbons, ...bowLoops, knot]);
-}
-const geomGiftBox = createGiftBoxGeometry();
-
-// Sphere (configurable via config.js)
-function createSphereGeometry() {
-    const radius = 0.5;
-    const widthSegments = 32;
-    const heightSegments = 32;
-    return new THREE.SphereGeometry(radius, widthSegments, heightSegments);
-}
-const geomSphere = createSphereGeometry();
-
-function createSnowflakeGeometry() {
-    const shape = new THREE.Shape();
-    const armLength = 0.5;
-    const armWidth = 0.04;
-    const branchLength = 0.18;
-    const branchAngle = Math.PI / 4; // 45 degrees
-
-    // Create 6 arms with branches
-    for (let arm = 0; arm < 6; arm++) {
-        const angle = (arm * Math.PI) / 3; // 60 degrees apart
-
-        // Main arm
-        const ax = Math.cos(angle) * armLength;
-        const ay = Math.sin(angle) * armLength;
-
-        // Draw main arm as thin rectangle
-        const perpX = Math.cos(angle + Math.PI / 2) * armWidth;
-        const perpY = Math.sin(angle + Math.PI / 2) * armWidth;
-
-        if (arm === 0) {
-            shape.moveTo(perpX, perpY);
-        } else {
-            shape.lineTo(perpX, perpY);
-        }
-        shape.lineTo(ax + perpX, ay + perpY);
-
-        // First branch (at 60% of arm length)
-        const b1x = Math.cos(angle) * armLength * 0.6;
-        const b1y = Math.sin(angle) * armLength * 0.6;
-        const branch1EndX = b1x + Math.cos(angle + branchAngle) * branchLength;
-        const branch1EndY = b1y + Math.sin(angle + branchAngle) * branchLength;
-        shape.lineTo(branch1EndX, branch1EndY);
-        shape.lineTo(b1x + perpX * 0.5, b1y + perpY * 0.5);
-
-        // Second branch (at 60% on other side)
-        const branch2EndX = b1x + Math.cos(angle - branchAngle) * branchLength;
-        const branch2EndY = b1y + Math.sin(angle - branchAngle) * branchLength;
-        shape.lineTo(branch2EndX, branch2EndY);
-        shape.lineTo(ax - perpX, ay - perpY);
-
-        // Third branch (at 35% of arm length)
-        const b2x = Math.cos(angle) * armLength * 0.35;
-        const b2y = Math.sin(angle) * armLength * 0.35;
-        const branch3EndX = b2x + Math.cos(angle + branchAngle) * branchLength * 0.7;
-        const branch3EndY = b2y + Math.sin(angle + branchAngle) * branchLength * 0.7;
-        shape.lineTo(branch3EndX, branch3EndY);
-        shape.lineTo(b2x, b2y);
-
-        const branch4EndX = b2x + Math.cos(angle - branchAngle) * branchLength * 0.7;
-        const branch4EndY = b2y + Math.sin(angle - branchAngle) * branchLength * 0.7;
-        shape.lineTo(branch4EndX, branch4EndY);
-
-        shape.lineTo(-perpX, -perpY);
-    }
-
-    shape.closePath();
-
-    return new THREE.ExtrudeGeometry(shape, {
-        depth: 0.02,
-        bevelEnabled: false
-    });
-}
-const geomSnowflake = createSnowflakeGeometry();
-
-function createStarGeometry() {
-    const shape = new THREE.Shape();
-    const outerRadius = 0.5;
-    const innerRadius = 0.25;
-    const points = 5;
-    for (let i = 0; i < points * 2; i++) {
-        const angle = (i * Math.PI) / points - Math.PI / 2;
-        const radius = i % 2 === 0 ? outerRadius : innerRadius;
-        const x = Math.cos(angle) * radius;
-        const y = Math.sin(angle) * radius;
-        if (i === 0) shape.moveTo(x, y);
-        else shape.lineTo(x, y);
-    }
-    shape.closePath();
-    return new THREE.ExtrudeGeometry(shape, { depth: 0.15, bevelEnabled: true, bevelThickness: 0.02, bevelSize: 0.02, bevelSegments: 2 });
-}
-const geomStar = createStarGeometry();
-
-function createHeartGeometry() {
-    const x = 0, y = 0;
-    const shape = new THREE.Shape();
-    shape.moveTo(x + 0.25, y + 0.25);
-    shape.bezierCurveTo(x + 0.25, y + 0.25, x + 0.20, y, x, y);
-    shape.bezierCurveTo(x - 0.30, y, x - 0.30, y + 0.35, x - 0.30, y + 0.35);
-    shape.bezierCurveTo(x - 0.30, y + 0.55, x - 0.10, y + 0.77, x + 0.25, y + 0.95);
-    shape.bezierCurveTo(x + 0.60, y + 0.77, x + 0.80, y + 0.55, x + 0.80, y + 0.35);
-    shape.bezierCurveTo(x + 0.80, y + 0.35, x + 0.80, y, x + 0.50, y);
-    shape.bezierCurveTo(x + 0.35, y, x + 0.25, y + 0.25, x + 0.25, y + 0.25);
-    // Smoother bevels to avoid sharp edge reflections
-    return new THREE.ExtrudeGeometry(shape, {
-        depth: 0.12,
-        bevelEnabled: true,
-        bevelThickness: 0.03,
-        bevelSize: 0.03,
-        bevelSegments: 4
-    });
-}
-const geomHeart = createHeartGeometry();
+// --- GEOMETRY INITIALIZATION ---
+// Geometries are now loaded from js/particles/geometry.js
+initGeometries();
 
 // --- OBJECT SYSTEM HELPERS ---
 // Default values for optional object properties
@@ -976,23 +771,7 @@ function validateAndMergeObjectDef(objectDef) {
     return { ...OBJECT_DEFAULTS, ...objectDef };
 }
 
-function getGeometryForType(type) {
-    const geometries = {
-        'star': geomStar,
-        'heart': geomHeart,
-        'snowflake': geomSnowflake,
-        'present': geomGiftBox,
-        'sphere': geomSphere,
-        'circle': geomStar  // circles use star geometry
-    };
-
-    if (!geometries[type]) {
-        console.warn(`Unknown geometry type: ${type}, falling back to star`);
-        return geometries['star'];
-    }
-
-    return geometries[type];
-}
+// getGeometryForType is now imported from js/particles/geometry.js
 
 function getMaterialFromDefinition(def) {
     const useMaterialPreset = def.materialType !== null && def.materialType !== undefined;
@@ -1132,65 +911,8 @@ function createStandardMaterial(def, materialProps) {
     });
 }
 
-// --- DENSITY-CORRECTED PARTICLE DISTRIBUTION ---
-// To distribute particles evenly on cone surface, we need to account for
-// the fact that larger circumferences need more particles.
-// The cumulative area up to height h on a cone is proportional to h^2
-// So we sample height using sqrt of uniform random to get even surface density.
-
-function sampleTreePosition() {
-    // Sample height with density correction (more particles where circumference is larger)
-    // For a cone: tip at top (y = treeHeight/2), base at bottom (y = -treeHeight/2)
-    // radius = 0 at top, radius = treeRadius at bottom
-    // To get uniform surface density, we use sqrt sampling biased toward bottom
-
-    const u = Math.random();
-    const heightFraction = Math.sqrt(u); // Biases toward larger values (bottom of tree)
-    const height = heightFraction * CONFIG.treeHeight;
-
-    // Radius increases with height (small at top h=0, large at bottom h=treeHeight)
-    const radiusAtHeight = (height / CONFIG.treeHeight) * CONFIG.treeRadius;
-
-    const theta = Math.random() * Math.PI * 2;
-    // Push particles to the edge (hollow cone: 0.6 to 1.0 of radius)
-    const r = radiusAtHeight * (0.6 + Math.random() * 0.4);
-
-    const x = r * Math.cos(theta);
-    const z = r * Math.sin(theta);
-    const y = (CONFIG.treeHeight / 2) - height;
-
-    return new THREE.Vector3(x, y, z);
-}
-
-// --- EXPLOSION TARGET POSITIONS (hollow sphere distribution) ---
-function generateExplosionTargets(count, center) {
-    const targets = [];
-    const innerR = CONFIG.explosionInnerRadius;
-    const outerR = CONFIG.explosionOuterRadius;
-
-    // Apply offset to center
-    const explosionCenter = new THREE.Vector3(
-        center.x + CONFIG.explosionOffsetX,
-        center.y + CONFIG.explosionOffsetY,
-        center.z + CONFIG.explosionOffsetZ
-    );
-
-    for (let i = 0; i < count; i++) {
-        // Uniform random point on spherical shell
-        const theta = Math.random() * Math.PI * 2; // Azimuthal angle (0 to 2π)
-        const phi = Math.acos(2 * Math.random() - 1); // Polar angle (uniform distribution)
-        const r = innerR + Math.random() * (outerR - innerR); // Random radius in shell
-
-        // Convert spherical to Cartesian coordinates (relative to center)
-        const x = explosionCenter.x + r * Math.sin(phi) * Math.cos(theta);
-        const y = explosionCenter.y + r * Math.sin(phi) * Math.sin(theta);
-        const z = explosionCenter.z + r * Math.cos(phi);
-
-        targets.push(new THREE.Vector3(x, y, z));
-    }
-
-    return targets;
-}
+// --- PARTICLE DISTRIBUTION ---
+// sampleTreePosition and generateExplosionTargets are now imported from js/particles/distribution.js
 
 // --- CREATE PARTICLES ---
 const particles = [];
@@ -1202,7 +924,7 @@ const totalParticleCount = CONFIG.objects.reduce((sum, obj) => sum + obj.count, 
 const explosionCenter = CONFIG.explosionCenterMode === 'camera'
     ? new THREE.Vector3(camera.position.x, camera.position.y, camera.position.z)
     : new THREE.Vector3(0, 0, 0);
-const explosionTargets = generateExplosionTargets(totalParticleCount, explosionCenter);
+const explosionTargets = generateExplosionTargets(totalParticleCount, explosionCenter, CONFIG);
 
 let explosionTargetIndex = 0;
 
@@ -1217,7 +939,7 @@ CONFIG.objects.forEach(objectDef => {
         mesh.scale.setScalar(fullDef.scale);
 
         // Use density-corrected position
-        const pos = sampleTreePosition();
+        const pos = sampleTreePosition(CONFIG);
 
         mesh.userData = {
             originalPos: pos.clone(),
@@ -1368,7 +1090,7 @@ function createTestParticle(config, explosionTarget) {
     const mesh = new THREE.Mesh(geometry, material);
     mesh.scale.setScalar(config.scale);
 
-    const pos = sampleTreePosition();
+    const pos = sampleTreePosition(CONFIG);
     mesh.position.copy(pos);
 
     mesh.userData = {
@@ -1405,7 +1127,7 @@ function rebuildTreeParticles() {
     const explosionCenter = CONFIG.explosionCenterMode === 'camera'
         ? new THREE.Vector3(camera.position.x, camera.position.y, camera.position.z)
         : new THREE.Vector3(0, 0, 0);
-    const explosionTargets = generateExplosionTargets(totalParticleCount, explosionCenter);
+    const explosionTargets = generateExplosionTargets(totalParticleCount, explosionCenter, CONFIG);
 
     let explosionTargetIndex = 0;
 
@@ -1419,7 +1141,7 @@ function rebuildTreeParticles() {
             const mesh = new THREE.Mesh(geometry, material);
             mesh.scale.setScalar(fullDef.scale);
 
-            const pos = sampleTreePosition();
+            const pos = sampleTreePosition(CONFIG);
 
             mesh.userData = {
                 originalPos: pos.clone(),
@@ -1473,7 +1195,7 @@ function rebuildAllTestParticles() {
     const explosionCenter = CONFIG.explosionCenterMode === 'camera'
         ? new THREE.Vector3(camera.position.x, camera.position.y, camera.position.z)
         : new THREE.Vector3(0, 0, 0);
-    const explosionTargets = generateExplosionTargets(totalCount, explosionCenter);
+    const explosionTargets = generateExplosionTargets(totalCount, explosionCenter, CONFIG);
 
     // Recreate all particles for all groups
     let targetIndex = 0;
