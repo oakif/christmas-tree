@@ -16,6 +16,14 @@ let useDeviceOrientation = false;
 let deviceOrientationEnabled = false; // User preference - disabled by default
 let deviceOrientationPermissionGranted = false;
 
+// Touch drag state - velocity-based rotation for mobile
+let lastTouchPos = null;
+// Accumulated rotation from touch (adds to parallax target)
+const touchRotationOffset = new THREE.Vector2(0, 0);
+// Velocity for momentum after touch ends
+const touchVelocity = new THREE.Vector2(0, 0);
+let isTouching = false;
+
 export function initMouseTracking(configRef) {
     CONFIG = configRef;
 
@@ -24,8 +32,10 @@ export function initMouseTracking(configRef) {
     document.addEventListener('mousemove', updateMousePosition, { passive: true });
     document.addEventListener('pointermove', updateMousePosition, { passive: true });
 
-    // Touch drag for mobile parallax
+    // Touch drag for mobile parallax - track relative movement
+    document.addEventListener('touchstart', handleTouchStart, { passive: true });
     document.addEventListener('touchmove', handleTouchMove, { passive: true });
+    document.addEventListener('touchend', handleTouchEnd, { passive: true });
 
     // Reset when mouse leaves the document/window
     document.addEventListener('mouseleave', resetMousePosition);
@@ -52,8 +62,10 @@ export function initMouseTracking(configRef) {
 
     // Edge-specific fix: release pointer capture which can block mousemove events
     window.addEventListener('pointerdown', (event) => {
-        // Update position on pointer down
-        updateMousePosition(event);
+        // Only update position for mouse, not touch (touch is handled separately)
+        if (event.pointerType !== 'touch') {
+            updateMousePosition(event);
+        }
         // Release any implicit pointer capture that Edge might set
         if (event.target.releasePointerCapture) {
             try {
@@ -77,15 +89,38 @@ function updateMousePosition(event) {
     lastMouseMoveTime = performance.now();
 }
 
-function handleTouchMove(event) {
+function handleTouchStart(event) {
     if (event.touches.length === 0) return;
     const touch = event.touches[0];
-    prevMouse.copy(mouse);
-    mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
-    mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
-    mouseVelocity.x = mouse.x - prevMouse.x;
-    mouseVelocity.y = mouse.y - prevMouse.y;
+    lastTouchPos = { x: touch.clientX, y: touch.clientY };
+    isTouching = true;
+    // Don't reset velocity - allow momentum to continue
+}
+
+function handleTouchMove(event) {
+    if (event.touches.length === 0 || !lastTouchPos) return;
+    const touch = event.touches[0];
+
+    // Calculate delta from last position (not from start)
+    const deltaX = ((touch.clientX - lastTouchPos.x) / window.innerWidth) * 2;
+    const deltaY = -((touch.clientY - lastTouchPos.y) / window.innerHeight) * 2;
+
+    // Add to accumulated rotation offset
+    touchRotationOffset.x += deltaX;
+    touchRotationOffset.y += deltaY;
+
+    // Track velocity for momentum
+    touchVelocity.x = deltaX;
+    touchVelocity.y = deltaY;
+
+    lastTouchPos = { x: touch.clientX, y: touch.clientY };
     lastMouseMoveTime = performance.now();
+}
+
+function handleTouchEnd() {
+    lastTouchPos = null;
+    isTouching = false;
+    // Velocity is preserved for momentum decay
 }
 
 // Request device orientation permission (required on iOS 13+)
@@ -191,12 +226,35 @@ export function updateParallaxTargets(animationState) {
     const isExploding = animationState === "EXPLODING";
     const parallaxActive = isExploding ? CONFIG.explodedParallaxEnabled : CONFIG.parallaxEnabled;
 
+    // Apply momentum decay when not touching
+    if (!isTouching) {
+        // Add velocity to offset (momentum)
+        touchRotationOffset.x += touchVelocity.x;
+        touchRotationOffset.y += touchVelocity.y;
+
+        // Decay velocity
+        const friction = 0.95;
+        touchVelocity.x *= friction;
+        touchVelocity.y *= friction;
+
+        // Slowly return offset to zero (spring back to center)
+        const returnSpeed = 0.02;
+        touchRotationOffset.x *= (1 - returnSpeed);
+        touchRotationOffset.y *= (1 - returnSpeed);
+
+        // Stop when very small
+        if (Math.abs(touchVelocity.x) < 0.0001) touchVelocity.x = 0;
+        if (Math.abs(touchVelocity.y) < 0.0001) touchVelocity.y = 0;
+    }
+
     if (parallaxActive) {
         const parallaxX = isExploding ? CONFIG.explodedParallaxStrengthX : CONFIG.parallaxStrengthX;
         const parallaxY = isExploding ? CONFIG.explodedParallaxStrengthY : CONFIG.parallaxStrengthY;
         const input = getMouse(); // Use device orientation or mouse
-        targetRotation.x = input.y * parallaxX;
-        targetRotation.y = input.x * parallaxY;
+
+        // Combine mouse/device input with touch rotation offset
+        targetRotation.x = input.y * parallaxX + touchRotationOffset.y * parallaxX;
+        targetRotation.y = input.x * parallaxY + touchRotationOffset.x * parallaxY;
         targetPosition.x = input.x * CONFIG.parallaxPositionStrengthX;
         targetPosition.y = input.y * CONFIG.parallaxPositionStrengthY;
     } else {
