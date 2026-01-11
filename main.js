@@ -595,6 +595,32 @@ document.getElementById('password-input').addEventListener('keydown', (e) => {
     }
 });
 
+// Settings modal event listeners
+document.getElementById('settings-icon').addEventListener('click', () => {
+    showSettingsModal();
+});
+
+document.getElementById('settings-close').addEventListener('click', () => {
+    hideSettingsModal();
+});
+
+document.getElementById('settings-image-set').addEventListener('change', async (e) => {
+    cancelSettingsAutoClose();
+    await switchImageSet(e.target.value);
+    // If encrypted set triggered password modal, hide settings
+    // Otherwise close settings after selection
+    if (!currentImageSet.encrypted) {
+        hideSettingsModal();
+    }
+});
+
+// Cancel auto-close on any interaction with settings modal
+document.getElementById('settings-modal').addEventListener('click', (e) => {
+    if (e.target.closest('.modal-content')) {
+        cancelSettingsAutoClose();
+    }
+});
+
 // Initialize image sets on startup
 loadImageSetsManifest().then(manifest => {
     if (manifest && manifest.defaultSet) {
