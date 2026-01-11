@@ -150,12 +150,20 @@
         .modal-content select {
             width: 100%;
             padding: 10px 12px;
+            padding-right: 32px;
             border-radius: 4px;
             border: 1px solid #444;
             background: #252535;
             color: white;
             font-size: 14px;
             box-sizing: border-box;
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M2 4l4 4 4-4'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            cursor: pointer;
         }
         .modal-content select:focus {
             outline: none;
