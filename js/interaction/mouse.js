@@ -23,6 +23,9 @@ export function initMouseTracking(configRef) {
     document.addEventListener('mousemove', updateMousePosition, { passive: true });
     document.addEventListener('pointermove', updateMousePosition, { passive: true });
 
+    // Touch drag for mobile parallax
+    document.addEventListener('touchmove', handleTouchMove, { passive: true });
+
     // Reset when mouse leaves the document/window
     document.addEventListener('mouseleave', resetMousePosition);
     document.addEventListener('mouseout', (event) => {
@@ -65,7 +68,7 @@ export function initMouseTracking(configRef) {
 
     // Request permission on user interaction (required for iOS 13+)
     // Must be called synchronously within the user gesture handler
-    const requestPermissionOnce = (e) => {
+    const requestPermissionOnce = () => {
         if (deviceOrientationPermissionGranted) return;
 
         console.log('User interaction detected, requesting permission...');
@@ -100,6 +103,17 @@ function updateMousePosition(event) {
     prevMouse.copy(mouse);
     mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
     mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+    mouseVelocity.x = mouse.x - prevMouse.x;
+    mouseVelocity.y = mouse.y - prevMouse.y;
+    lastMouseMoveTime = performance.now();
+}
+
+function handleTouchMove(event) {
+    if (event.touches.length === 0) return;
+    const touch = event.touches[0];
+    prevMouse.copy(mouse);
+    mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
     mouseVelocity.x = mouse.x - prevMouse.x;
     mouseVelocity.y = mouse.y - prevMouse.y;
     lastMouseMoveTime = performance.now();

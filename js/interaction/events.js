@@ -9,6 +9,10 @@ let onReturn = null;
 let getAnimationState = null;
 let setAnimationState = null;
 
+// Touch tracking to distinguish tap from drag
+let touchStartPos = null;
+const TAP_THRESHOLD = 10; // pixels - movement less than this is considered a tap
+
 export function initEvents(configRef, callbacks) {
     CONFIG = configRef;
     onExplosion = callbacks.onExplosion;
@@ -17,7 +21,10 @@ export function initEvents(configRef, callbacks) {
     setAnimationState = callbacks.setAnimationState;
 
     window.addEventListener('mousedown', triggerExplosion);
-    window.addEventListener('touchstart', triggerExplosion, { passive: false });
+
+    // For touch: track start position and only trigger on tap (not drag)
+    window.addEventListener('touchstart', handleTouchStart, { passive: false });
+    window.addEventListener('touchend', handleTouchEnd, { passive: false });
 }
 
 export function initResizeHandler(context) {
@@ -48,17 +55,47 @@ export function initResizeHandler(context) {
     });
 }
 
+function handleTouchStart(event) {
+    // Ignore touches on dat.GUI elements
+    if (event.target.closest('.dg')) return;
+
+    // Prevent default to avoid scroll/zoom
+    event.preventDefault();
+
+    // Record start position
+    if (event.touches.length > 0) {
+        touchStartPos = {
+            x: event.touches[0].clientX,
+            y: event.touches[0].clientY,
+        };
+    }
+}
+
+function handleTouchEnd(event) {
+    // Ignore touches on dat.GUI elements
+    if (event.target.closest('.dg')) return;
+
+    if (!touchStartPos) return;
+
+    // Check if this was a tap (not a drag)
+    const endPos = event.changedTouches[0];
+    const dx = endPos.clientX - touchStartPos.x;
+    const dy = endPos.clientY - touchStartPos.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    touchStartPos = null;
+
+    // Only trigger explosion if it was a tap (minimal movement)
+    if (distance < TAP_THRESHOLD) {
+        triggerExplosion(event);
+    }
+}
+
 function triggerExplosion(event) {
     // Ignore clicks on dat.GUI elements
     const target = event.target;
     if (target.closest('.dg')) {
         return; // Click was on GUI, ignore it
-    }
-
-    // Only prevent default on touch events to avoid scroll/zoom
-    // Don't prevent on mouse events as it breaks mousemove tracking
-    if (event.type === 'touchstart') {
-        event.preventDefault();
     }
 
     const state = getAnimationState();
