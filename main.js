@@ -5,6 +5,12 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GUI } from 'dat.gui';
 import { CONFIG } from './config.js';
+import {
+    deriveKeyFromPassword,
+    decryptText,
+    decryptImageToObjectURL,
+    base64ToArrayBuffer,
+} from './crypto.js';
 
 // --- SETUP SCENE ---
 const container = document.getElementById('canvas-container');
@@ -134,6 +140,11 @@ let showcaseTextures = [];
 let showcaseCurrentIndex = 0;
 let showcaseLastShownIndex = -1;
 let showcaseImagesLoaded = false;
+
+// Image set state
+let availableImageSets = [];
+let currentImageSet = null;
+let decryptionKey = null;
 
 // Create rectangular vignette alpha map using canvas
 function createVignetteAlphaMap(edgeSoftness) {
@@ -312,68 +323,223 @@ function updateShowcaseBoxTexture(texture) {
     showcaseBox.geometry = newGeometry;
 }
 
-// Load all showcase images
-function loadShowcaseImages() {
-    const folder = CONFIG.showcase.imageFolder;
-    const manifestPath = folder + CONFIG.showcase.manifestFile;
+// Load master manifest and initialize image sets
+async function loadImageSetsManifest() {
+    const manifestPath = CONFIG.showcase.imageFolder + 'manifest.json';
 
-    // Fetch the manifest file to get list of images
-    fetch(manifestPath)
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`Manifest not found: ${manifestPath}`);
-            }
-            return response.json();
-        })
-        .then(images => {
-            if (!images || images.length === 0) {
-                console.warn('No images found in manifest');
-                return;
-            }
+    try {
+        const response = await fetch(manifestPath);
+        if (!response.ok) {
+            console.warn('No image sets manifest found');
+            return null;
+        }
 
-            console.log(`Loading ${images.length} showcase images from manifest`);
+        const manifest = await response.json();
+        availableImageSets = manifest.sets || [];
 
-            // Load all images from manifest
-            const loadPromises = images.map((filename, index) => {
-                return new Promise((resolve) => {
-                    textureLoader.load(
-                        folder + filename,
-                        (texture) => {
-                            texture.colorSpace = THREE.SRGBColorSpace;  // Correct color space
-                            showcaseTextures[index] = texture;
-                            resolve(texture);
-                        },
-                        undefined,
-                        (error) => {
-                            console.warn(`Failed to load showcase image: ${folder}${filename}`);
-                            resolve(null); // Don't reject, just mark as null
-                        }
-                    );
-                });
-            });
+        if (availableImageSets.length === 0) {
+            console.warn('No image sets found in manifest');
+            return null;
+        }
 
-            return Promise.all(loadPromises);
-        })
-        .then(textures => {
-            if (!textures) return;
-
-            // Filter out failed loads
-            showcaseTextures = showcaseTextures.filter(t => t !== null);
-
-            if (showcaseTextures.length > 0) {
-                showcaseImagesLoaded = true;
-                console.log(`Successfully loaded ${showcaseTextures.length} showcase images`);
-                // Initialize showcase box with first image
-                initializeShowcaseBox(showcaseTextures[0]);
-            }
-        })
-        .catch(error => {
-            console.warn('Could not load showcase images:', error.message);
-        });
+        return manifest;
+    } catch (error) {
+        console.warn('Could not load image sets manifest:', error.message);
+        return null;
+    }
 }
 
-// Load showcase images on startup
-loadShowcaseImages();
+// Switch to a different image set
+async function switchImageSet(setId) {
+    const set = availableImageSets.find(s => s.id === setId);
+    if (!set) {
+        console.warn(`Image set not found: ${setId}`);
+        return;
+    }
+
+    // Clear current state
+    currentImageSet = set;
+    decryptionKey = null;
+    showcaseTextures = [];
+    showcaseImagesLoaded = false;
+    showcaseCurrentIndex = 0;
+    showcaseLastShownIndex = -1;
+
+    if (set.encrypted) {
+        showPasswordPrompt(set);
+    } else {
+        await loadUnencryptedImageSet(set);
+    }
+}
+
+// Load unencrypted image set
+async function loadUnencryptedImageSet(set) {
+    const folder = CONFIG.showcase.imageFolder + set.path;
+    const manifestPath = folder + 'images.json';
+
+    try {
+        const response = await fetch(manifestPath);
+        if (!response.ok) {
+            console.warn(`Could not load images.json for set: ${set.id}`);
+            return;
+        }
+
+        const images = await response.json();
+        await loadImagesFromList(images, folder);
+    } catch (error) {
+        console.warn(`Error loading image set ${set.id}:`, error.message);
+    }
+}
+
+// Load encrypted image set with password
+async function loadEncryptedImageSet(set, password) {
+    const folder = CONFIG.showcase.imageFolder + set.path;
+    const manifestPath = folder + 'manifest.json';
+
+    const response = await fetch(manifestPath);
+    const manifest = await response.json();
+
+    // Derive key from password
+    const salt = new Uint8Array(base64ToArrayBuffer(manifest.salt));
+    decryptionKey = await deriveKeyFromPassword(password, salt);
+
+    // Decrypt images list
+    const imagesList = JSON.parse(
+        await decryptText(manifest.images, manifest.iv, decryptionKey)
+    );
+
+    // Load encrypted images
+    await loadEncryptedImages(imagesList, folder);
+}
+
+// Load images from a list of filenames
+async function loadImagesFromList(images, folder) {
+    if (!images || images.length === 0) {
+        console.warn('No images in list');
+        return;
+    }
+
+    console.log(`Loading ${images.length} images from ${folder}`);
+
+    const loadPromises = images.map((filename, index) => {
+        return new Promise((resolve) => {
+            textureLoader.load(
+                folder + filename,
+                (texture) => {
+                    texture.colorSpace = THREE.SRGBColorSpace;
+                    showcaseTextures[index] = texture;
+                    resolve(texture);
+                },
+                undefined,
+                () => {
+                    console.warn(`Failed to load: ${folder}${filename}`);
+                    resolve(null);
+                }
+            );
+        });
+    });
+
+    await Promise.all(loadPromises);
+    finalizeImageLoad();
+}
+
+// Load encrypted images
+async function loadEncryptedImages(imagesList, folder) {
+    console.log(`Loading ${imagesList.length} encrypted images from ${folder}`);
+
+    const loadPromises = imagesList.map(async (_, index) => {
+        try {
+            const response = await fetch(folder + index + '.enc');
+            const encryptedData = await response.arrayBuffer();
+            const objectURL = await decryptImageToObjectURL(encryptedData, decryptionKey);
+
+            return new Promise((resolve) => {
+                textureLoader.load(
+                    objectURL,
+                    (texture) => {
+                        texture.colorSpace = THREE.SRGBColorSpace;
+                        showcaseTextures[index] = texture;
+                        URL.revokeObjectURL(objectURL);
+                        resolve(texture);
+                    },
+                    undefined,
+                    () => {
+                        URL.revokeObjectURL(objectURL);
+                        resolve(null);
+                    }
+                );
+            });
+        } catch (error) {
+            console.warn(`Failed to decrypt image ${index}:`, error.message);
+            return null;
+        }
+    });
+
+    await Promise.all(loadPromises);
+    finalizeImageLoad();
+}
+
+// Finalize image loading
+function finalizeImageLoad() {
+    showcaseTextures = showcaseTextures.filter(t => t !== null);
+
+    if (showcaseTextures.length > 0) {
+        showcaseImagesLoaded = true;
+        console.log(`Successfully loaded ${showcaseTextures.length} images`);
+        initializeShowcaseBox(showcaseTextures[0]);
+    }
+}
+
+// Password modal functions
+function showPasswordPrompt(set) {
+    const modal = document.getElementById('password-modal');
+    const setNameEl = document.getElementById('password-set-name');
+    const input = document.getElementById('password-input');
+    const error = document.getElementById('password-error');
+
+    setNameEl.textContent = `Enter password for "${set.name}"`;
+    input.value = '';
+    error.classList.add('hidden');
+    modal.classList.remove('hidden');
+    input.focus();
+}
+
+function hidePasswordPrompt() {
+    const modal = document.getElementById('password-modal');
+    modal.classList.add('hidden');
+}
+
+// Password modal event listeners
+document.getElementById('password-submit').addEventListener('click', async () => {
+    const input = document.getElementById('password-input');
+    const error = document.getElementById('password-error');
+    const password = input.value;
+
+    try {
+        await loadEncryptedImageSet(currentImageSet, password);
+        hidePasswordPrompt();
+    } catch (e) {
+        error.classList.remove('hidden');
+        console.warn('Decryption failed:', e);
+    }
+});
+
+document.getElementById('password-cancel').addEventListener('click', () => {
+    hidePasswordPrompt();
+});
+
+document.getElementById('password-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        document.getElementById('password-submit').click();
+    }
+});
+
+// Initialize image sets on startup
+loadImageSetsManifest().then(manifest => {
+    if (manifest && manifest.defaultSet) {
+        switchImageSet(manifest.defaultSet);
+    }
+});
 
 // --- POST PROCESSING ---
 const renderScene = new RenderPass(scene, camera);
@@ -1629,6 +1795,29 @@ visibilityFolder.open();
 // 6. SHOWCASE
 // ========================================
 const showcaseFolder = gui.addFolder('Showcase');
+
+// Image set dropdown - populated after manifest loads
+guiControls.imageSet = '';
+let imageSetController = null;
+
+loadImageSetsManifest().then(manifest => {
+    if (!manifest || !manifest.sets || manifest.sets.length === 0) return;
+
+    // Build options object: { "Display Name": "set_id" }
+    const setOptions = {};
+    manifest.sets.forEach(set => {
+        setOptions[set.name] = set.id;
+    });
+
+    guiControls.imageSet = manifest.defaultSet || manifest.sets[0].id;
+
+    imageSetController = showcaseFolder.add(guiControls, 'imageSet', setOptions)
+        .name('Image Set')
+        .onChange(async (setId) => {
+            await switchImageSet(setId);
+        });
+});
+
 showcaseFolder.add(guiControls, 'imageDelay', 0, 5000, 100).name('Delay (ms)').onChange(val => {
     CONFIG.showcase.delay = val;
 });
