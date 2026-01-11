@@ -284,8 +284,14 @@ export function updateParallaxTargets(animationState) {
 
     // Spring back Y (up/down tilt) to center when not touching
     if (!isTouching) {
-        const returnSpeed = 0.02;
+        const returnSpeed = CONFIG.touchTiltReturnSpeed || 0.02;
         touchRotationOffset.y *= (1 - returnSpeed);
+
+        // Snap to zero when very close to prevent drift
+        if (Math.abs(touchRotationOffset.y) < 0.001) {
+            touchRotationOffset.y = 0;
+            touchVelocity.y = 0;
+        }
     }
 
     // Log velocity (only when there's meaningful velocity)
