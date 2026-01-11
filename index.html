@@ -57,11 +57,10 @@
             justify-content: center;
             align-items: center;
             z-index: 20000;
-            opacity: 0;
             transition: opacity var(--modal-fade-duration, 300ms) ease-out;
         }
-        .modal.visible {
-            opacity: 1;
+        .modal.fade-out {
+            opacity: 0;
         }
         .modal.hidden { display: none; }
         .hidden { display: none !important; }
@@ -246,7 +245,7 @@
         </div>
     </div>
 
-    <div id="settings-modal" class="modal hidden">
+    <div id="settings-modal" class="modal">
         <div class="modal-content">
             <h3>Settings</h3>
             <div class="settings-row">
