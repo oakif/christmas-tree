@@ -13,6 +13,7 @@ let CONFIG = null;
 const deviceOrientation = new THREE.Vector2(0, 0);
 let baselineOrientation = null;
 let useDeviceOrientation = false;
+let deviceOrientationEnabled = false; // User preference - disabled by default
 let deviceOrientationPermissionGranted = false;
 
 export function initMouseTracking(configRef) {
@@ -65,38 +66,6 @@ export function initMouseTracking(configRef) {
 
     // Device orientation for mobile parallax
     window.addEventListener('deviceorientation', handleDeviceOrientation, true);
-
-    // Request permission on user interaction (required for iOS 13+)
-    // Must be called synchronously within the user gesture handler
-    const requestPermissionOnce = () => {
-        if (deviceOrientationPermissionGranted) return;
-
-        console.log('User interaction detected, requesting permission...');
-
-        if (typeof DeviceOrientationEvent !== 'undefined' &&
-            typeof DeviceOrientationEvent.requestPermission === 'function') {
-            // iOS 13+ requires permission request
-            DeviceOrientationEvent.requestPermission()
-                .then(permission => {
-                    console.log('Permission result:', permission);
-                    if (permission === 'granted') {
-                        deviceOrientationPermissionGranted = true;
-                        document.removeEventListener('touchend', requestPermissionOnce);
-                        document.removeEventListener('click', requestPermissionOnce);
-                    }
-                })
-                .catch(err => {
-                    console.error('Permission request failed:', err);
-                });
-        } else {
-            // No permission needed on Android/desktop
-            console.log('No permission API - device orientation should work automatically');
-            deviceOrientationPermissionGranted = true;
-        }
-    };
-
-    document.addEventListener('touchend', requestPermissionOnce);
-    document.addEventListener('click', requestPermissionOnce);
 }
 
 function updateMousePosition(event) {
@@ -124,30 +93,36 @@ export async function requestDeviceOrientationPermission() {
     if (typeof DeviceOrientationEvent !== 'undefined' &&
         typeof DeviceOrientationEvent.requestPermission === 'function') {
         try {
-            console.log('Requesting device orientation permission...');
             const permission = await DeviceOrientationEvent.requestPermission();
-            console.log('Permission result:', permission);
             deviceOrientationPermissionGranted = permission === 'granted';
             return deviceOrientationPermissionGranted;
         } catch (e) {
-            console.error('Permission request failed:', e);
             return false;
         }
     }
     // No permission needed on Android/desktop
-    console.log('No permission needed for device orientation');
     deviceOrientationPermissionGranted = true;
     return true;
 }
 
+// Enable/disable device orientation parallax
+export function setDeviceOrientationEnabled(enabled) {
+    deviceOrientationEnabled = enabled;
+    if (!enabled) {
+        useDeviceOrientation = false;
+        baselineOrientation = null;
+    }
+}
+
+export function isDeviceOrientationEnabled() {
+    return deviceOrientationEnabled;
+}
+
 // Handle device orientation for mobile parallax
 function handleDeviceOrientation(event) {
+    // Only process if user has enabled this feature
+    if (!deviceOrientationEnabled) return;
     if (event.gamma === null || event.beta === null) return;
-
-    // Log first orientation event
-    if (!useDeviceOrientation) {
-        console.log('First device orientation event received:', event.gamma, event.beta);
-    }
 
     // gamma: left/right tilt (-90 to 90)
     // beta: front/back tilt (-180 to 180)

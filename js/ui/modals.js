@@ -1,4 +1,5 @@
 // Settings and password modal logic
+import { setDeviceOrientationEnabled, isDeviceOrientationEnabled, requestDeviceOrientationPermission } from '../interaction/mouse.js';
 
 let settingsAutoCloseTimer = null;
 let settingsCountdown = 10;
@@ -48,6 +49,9 @@ export function showSettingsModal(withCountdown = false) {
 
     // Sync reassemble checkbox with current config
     document.getElementById('settings-reassemble').checked = CONFIG.reassembleOnClick;
+
+    // Sync tilt parallax checkbox
+    document.getElementById('settings-tilt-parallax').checked = isDeviceOrientationEnabled();
 
     // Hide password row when opening modal
     hideSettingsPasswordRow();
@@ -260,6 +264,22 @@ function setupSettingsModalListeners() {
     // Reassemble checkbox
     document.getElementById('settings-reassemble').addEventListener('change', (e) => {
         CONFIG.reassembleOnClick = e.target.checked;
+    });
+
+    // Tilt parallax checkbox
+    document.getElementById('settings-tilt-parallax').addEventListener('change', async (e) => {
+        if (e.target.checked) {
+            // Request permission when enabling
+            const granted = await requestDeviceOrientationPermission();
+            if (granted) {
+                setDeviceOrientationEnabled(true);
+            } else {
+                // Permission denied, uncheck the box
+                e.target.checked = false;
+            }
+        } else {
+            setDeviceOrientationEnabled(false);
+        }
     });
 
     // Settings password submit
