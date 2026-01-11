@@ -29,7 +29,7 @@ from cryptography.hazmat.primitives import hashes
 PBKDF2_ITERATIONS = 100000
 IV_LENGTH = 12
 SALT_LENGTH = 16
-IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic'}
+IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic'}
 
 
 def derive_key(password: str, salt: bytes) -> bytes:
@@ -68,7 +68,8 @@ def encrypt_images(source_folder: Path, output_folder: Path, set_name: str):
     # Find all images
     images = []
     for f in sorted(source_folder.iterdir()):
-        if f.suffix.lower() in IMAGE_EXTENSIONS:
+        ext = f.suffix.lstrip('.').lower()
+        if ext in IMAGE_EXTENSIONS:
             images.append(f.name)
 
     if not images:
