@@ -497,7 +497,6 @@ let settingsCountdown = 10;
 function showSettingsModal(withCountdown = false) {
     const modal = document.getElementById('settings-modal');
     const select = document.getElementById('settings-image-set');
-    const countdown = document.getElementById('settings-countdown');
 
     // Populate dropdown from availableImageSets
     select.innerHTML = '';
@@ -514,22 +513,23 @@ function showSettingsModal(withCountdown = false) {
     // Sync reassemble checkbox with current config
     document.getElementById('settings-reassemble').checked = CONFIG.reassembleOnClick;
 
+    const closeBtn = document.getElementById('settings-close');
+
     // Only start auto-close countdown on initial page load
     if (withCountdown) {
-        settingsCountdown = 10;
-        countdown.textContent = `Auto-closing in ${settingsCountdown}s...`;
-        countdown.classList.remove('hidden');
+        settingsCountdown = 5;
+        closeBtn.textContent = `Begin (${settingsCountdown}s)`;
 
         settingsAutoCloseTimer = setInterval(() => {
             settingsCountdown--;
             if (settingsCountdown <= 0) {
                 hideSettingsModal();
             } else {
-                countdown.textContent = `Auto-closing in ${settingsCountdown}s...`;
+                closeBtn.textContent = `Begin (${settingsCountdown}s)`;
             }
         }, 1000);
     } else {
-        countdown.classList.add('hidden');
+        closeBtn.textContent = 'Save';
     }
 
     modal.classList.remove('hidden');
@@ -549,9 +549,9 @@ function cancelSettingsAutoClose() {
     if (settingsAutoCloseTimer) {
         clearInterval(settingsAutoCloseTimer);
         settingsAutoCloseTimer = null;
+        // Update button text when countdown is cancelled
+        document.getElementById('settings-close').textContent = 'Save';
     }
-    const countdown = document.getElementById('settings-countdown');
-    countdown.classList.add('hidden');
 }
 
 // Password modal functions
