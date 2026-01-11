@@ -30,7 +30,6 @@ import {
     initModals,
     updateImageSets,
     showSettingsModal,
-    showPasswordPrompt,
 } from './ui/modals.js';
 import { createGUI } from './ui/gui.js';
 
@@ -180,12 +179,9 @@ setFpsVisibility(CONFIG.showFPS);
 // --- INITIALIZE SHOWCASE ---
 initShowcase(scene, CONFIG);
 
-// Async wrapper for switchImageSet that handles password prompts
+// Async wrapper for switchImageSet (password prompts handled by settings modal)
 async function handleSwitchImageSet(setId) {
-    const result = await switchImageSet(setId);
-    if (result && result.needsPassword) {
-        showPasswordPrompt(result.set);
-    }
+    await switchImageSet(setId);
 }
 
 // --- INITIALIZE MODALS ---
