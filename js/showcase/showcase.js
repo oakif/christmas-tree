@@ -5,7 +5,7 @@ import {
     decryptText,
     decryptImageToObjectURL,
     base64ToArrayBuffer,
-} from '../../crypto.js';
+} from './crypto.js';
 
 // Module state
 let showcaseBox = null;
