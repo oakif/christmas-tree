@@ -189,6 +189,10 @@ function setupSettingsModalListeners() {
         hideSettingsModal();
     });
 
+    document.getElementById('settings-image-set').addEventListener('focus', () => {
+        cancelSettingsAutoClose();
+    });
+
     document.getElementById('settings-image-set').addEventListener('change', async (e) => {
         cancelSettingsAutoClose();
         const set = availableImageSets.find(s => s.id === e.target.value);
