@@ -183,9 +183,8 @@ export const CONFIG = {
     // 6. SHOWCASE
     // ========================================
     showcase: {
-        imageFolder: './images/',         // Base folder path for images
-        manifestFile: 'images.json',      // JSON file listing image filenames (in imageFolder)
-        displayMode: 'random',        // 'sequential' | 'random'
+        imageFolder: './images/',         // Base folder path for image sets
+        displayMode: 'random',            // 'sequential' | 'random'
         delay: 0,                         // Milliseconds before showing image after explosion
 
         // Box dimensions
@@ -486,9 +485,6 @@ export const CONFIG = {
     // Showcase
     get showcaseImageFolder() { return this.showcase.imageFolder; },
     set showcaseImageFolder(v) { this.showcase.imageFolder = v; },
-
-    get showcaseManifestFile() { return this.showcase.manifestFile; },
-    set showcaseManifestFile(v) { this.showcase.manifestFile = v; },
 
     get showcaseDisplayMode() { return this.showcase.displayMode; },
     set showcaseDisplayMode(v) { this.showcase.displayMode = v; },
