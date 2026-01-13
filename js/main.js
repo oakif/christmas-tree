@@ -56,6 +56,7 @@ import {
     getLastMouseMoveTime,
     updateParallaxTargets,
     applyParallaxToGroup,
+    normalizeHorizontalSpin,
 } from './interaction/mouse.js';
 import { initEvents, initResizeHandler } from './interaction/events.js';
 
@@ -211,6 +212,9 @@ initMouseTracking(CONFIG);
 // --- INITIALIZE EVENTS ---
 initEvents(CONFIG, {
     onExplosion: () => {
+        // Normalize spin to within one rotation to prevent long unwinding
+        normalizeHorizontalSpin();
+
         // Reset individual parallax shifts
         particles.forEach(p => {
             p.userData.individualParallaxShift.set(0, 0, 0);

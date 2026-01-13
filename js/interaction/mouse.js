@@ -268,6 +268,19 @@ export function getTargetPosition() {
     return targetPosition;
 }
 
+// Normalize horizontal spin to within one rotation (±2π) to prevent long unwinding on explosion
+export function normalizeHorizontalSpin() {
+    const TWO_PI = Math.PI * 2;
+    // Only normalize if we've spun more than one full rotation
+    if (Math.abs(touchRotationOffset.x) > TWO_PI) {
+        touchRotationOffset.x = ((touchRotationOffset.x % TWO_PI) + TWO_PI) % TWO_PI;
+        // Center around 0 (range -π to π) for shortest path back
+        if (touchRotationOffset.x > Math.PI) {
+            touchRotationOffset.x -= TWO_PI;
+        }
+    }
+}
+
 // Calculate parallax targets based on animation state
 export function updateParallaxTargets(animationState) {
     const isExploding = animationState === "EXPLODING";
